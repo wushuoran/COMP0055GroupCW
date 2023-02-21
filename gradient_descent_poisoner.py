@@ -1,7 +1,7 @@
 from __future__ import division, print_function
 
 import argparse
-from ast import main
+#from ast import main
 from bisect import bisect
 from datetime import datetime
 import numpy as np
@@ -680,6 +680,33 @@ def inf_flip(X_tr, Y_tr, count):
 
     return X_tr[poisinds], [yvals[a] for a in poisinds]
 
+def adaptive(X_tr, Y_tr, count):
+  Y_tr_copy = np.array(Y_tr)
+  X_tr_copy = np.copy(X_tr)
+  print(np.allclose(X_tr_copy,X_tr))
+  room = .5+np.abs(Y_tr_copy)
+  yvals = 1-np.floor(0.5+Y_tr_copy)
+  diff = (yvals-Y_tr_copy).ravel()
+  poisinds = []
+  X_pois = np.zeros((count,X_tr.shape[1]))
+  Y_pois = []
+  for i in range(count):
+    #print(X_tr_copy.shape,diff.shape)
+    inv_cov = np.linalg.inv(0.01 * np.eye(X_tr_copy.shape[1]) + np.dot(X_tr_copy.T, X_tr_copy))
+    H = np.dot(np.dot(X_tr_copy, inv_cov), X_tr_copy.T)
+    bests = np.sum(H,axis=1)
+    stat = np.multiply(bests.ravel(),diff)
+    #indtoadd = np.argmax(stat)
+    indtoadd = np.random.choice(stat.shape[0],p=np.abs(stat)/np.sum(np.abs(stat)))
+    #print(indtoadd)
+    X_pois[i] = X_tr_copy[indtoadd,:]
+    X_tr_copy = np.delete(X_tr_copy,indtoadd,axis=0)
+    diff = np.delete(diff,indtoadd,axis=0)
+    Y_pois.append(yvals[indtoadd])
+    yvals = np.delete(yvals,indtoadd,axis=0)
+  print(X_pois)
+  print(Y_pois)
+  return np.matrix(X_pois),Y_pois
 
 def main(args):
     init = args.initialization
@@ -691,8 +718,15 @@ def main(args):
     poi_val_y = pd.read_csv('val_y.csv')
 
     totprop = args.poisct / (args.poisct + args.trainct)
-    poisx,poisy = inf_flip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
-    print(poisx + " " + poisy)
+    #poisx,poisy = inf_flip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+    poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+    print(poisx )
+    print(poisy)
+
+
+
+
+
 
 #Main
 if __name__=='__main__':
