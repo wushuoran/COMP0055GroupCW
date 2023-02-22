@@ -498,10 +498,6 @@ class GDPoisoner(object):
 
         w = np.reshape(clf.coef_, (self.feanum,))
         sum_w = np.linalg.norm(w, 1)
-        # a different from ori version
-        self.tsty = self.tsty['Life Expectancy'].tolist()
-        self.vldy = self.vldy['Life Expectancy'].tolist()
-        ###############################################
         mean = sum(self.tsty) / len(self.tsty)
         vmean = sum(self.vldy) / len(self.vldy)
 
@@ -920,9 +916,13 @@ def main(args):
     poi_train_y = pd.read_csv('train_y.csv')
     poi_train_y = poi_train_y['Life Expectancy'].tolist()
     poi_test_x = pd.read_csv('test_X.csv')
+    poi_test_x = np.matrix(poi_test_x.to_numpy())
     poi_test_y = pd.read_csv('test_y.csv')
+    poi_test_y = poi_test_y['Life Expectancy'].tolist()
     poi_val_x = pd.read_csv('val_X.csv')
+    poi_val_x = np.matrix(poi_val_x.to_numpy())
     poi_val_y = pd.read_csv('val_y.csv')
+    poi_val_y = poi_val_y['Life Expectancy'].tolist()
 
     totprop = args.poisct / (args.poisct + args.trainct)
     #poisx,poisy = inf_flip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
