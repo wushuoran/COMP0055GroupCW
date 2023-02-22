@@ -498,7 +498,10 @@ class GDPoisoner(object):
 
         w = np.reshape(clf.coef_, (self.feanum,))
         sum_w = np.linalg.norm(w, 1)
-
+        # a different from ori version
+        self.tsty = self.tsty['Life Expectancy'].tolist()
+        self.vldy = self.vldy['Life Expectancy'].tolist()
+        ###############################################
         mean = sum(self.tsty) / len(self.tsty)
         vmean = sum(self.vldy) / len(self.vldy)
 
@@ -658,6 +661,206 @@ class GDPoisoner(object):
         raise NotImplementedError
 
 
+class LinRegGDPoisoner(GDPoisoner):
+    print("Linge")
+
+    def __init__(self, x, y, testx, testy, validx, validy, \
+                 eta, beta, sigma, eps, \
+                 mproc, \
+                 trainfile, resfile, \
+                 objective, opty, colmap):
+        """
+        LinRegGDPoisoner implements computations for ordinary least
+        squares regression. Computations involving regularization are
+        handled in the respective children classes
+
+        for input description, see GDPoisoner.__init__
+        """
+
+        GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
+                            eta, beta, sigma, eps, mproc, \
+                            trainfile, resfile, \
+                            objective, opty, colmap)
+
+        self.x = x
+        self.y = y
+        self.initclf, self.initlam = self.learn_model(self.x, self.y, None)
+
+    def learn_model(self, x, y, clf):
+        if (not clf):
+            clf = linear_model.Ridge(alpha=0.00001)
+        clf.fit(x, y)
+        return clf, 0
+
+    def compute_sigma(self):
+        sigma = np.dot(np.transpose(self.trnx), self.trnx)
+        sigma = sigma / self.trnx.shape[0]
+        return sigma
+
+    def compute_mu(self):
+        mu = np.mean(self.trnx, axis=0)
+        return mu
+
+    def compute_m(self, clf, poisxelem, poisyelem):
+        w, b = clf.coef_, clf.intercept_
+        poisxelemtransp = np.reshape(poisxelem, (self.feanum, 1))
+        wtransp = np.reshape(w, (1, self.feanum))
+        errterm = (np.dot(w, poisxelemtransp) + b - poisyelem).reshape((1, 1))
+        first = np.dot(poisxelemtransp, wtransp)
+        m = first + errterm[0, 0] * np.identity(self.feanum)
+        return m
+
+    def compute_wb_zc(self, eq7lhs, mu, w, m, n, poisxelem):
+        eq7rhs = -(1 / n) * np.bmat([[m, -np.matrix(poisxelem.T)],
+                                     [np.matrix(w.T), np.matrix([-1])]])
+
+        wbxc = np.linalg.lstsq(eq7lhs, eq7rhs, rcond=None)[0]
+        wxc = wbxc[:-1, :-1]  # get all but last row
+        bxc = wbxc[-1, :-1]  # get last row
+        wyc = wbxc[:-1, -1]
+        byc = wbxc[-1, -1]
+
+        return wxc, bxc.ravel(), wyc.ravel(), byc
+
+    def compute_r(self, clf, lam):
+        r = np.zeros((1, self.feanum))
+        return r
+
+    def comp_obj_trn(self, clf, lam, otherargs):
+        errs = clf.predict(self.trnx) - self.trny
+        mse = np.linalg.norm(errs) ** 2 / self.samplenum
+
+        return mse
+
+    def comp_obj_vld(self, clf, lam, otherargs):
+        m = self.vldx.shape[0]
+        errs = clf.predict(self.vldx) - self.vldy
+        mse = np.linalg.norm(errs) ** 2 / m
+        return mse
+
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
+        res = (clf.predict(self.trnx) - self.trny)
+
+        gradx = np.dot(self.trnx, wxc) + bxc
+        grady = np.dot(self.trnx, wyc.T) + byc
+
+        attackx = np.dot(res, gradx) / self.samplenum
+        attacky = np.dot(res, grady) / self.samplenum
+
+        return attackx, attacky
+
+    def comp_attack_vld(self, clf, wxc, bxc, wyc, byc, otherargs):
+        n = self.vldx.shape[0]
+        res = (clf.predict(self.vldx) - self.vldy)
+
+        gradx = np.dot(self.vldx, wxc) + bxc
+        grady = np.dot(self.vldx, wyc.T) + byc
+
+        attackx = np.dot(res, gradx) / n
+        attacky = np.dot(res, grady) / n
+
+        return attackx, attacky
+
+class LassoGDPoisoner(LinRegGDPoisoner):
+    print("LassG")
+
+    def __init__(self, x, y, testx, testy, validx, validy, \
+                 eta, beta, sigma, eps, \
+                 mproc, \
+                 trainfile, resfile, \
+                 objective, opty, colmap):
+        GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
+                            eta, beta, sigma, eps, mproc, \
+                            trainfile, resfile, \
+                            objective, opty, colmap)
+
+        self.initlam = -1
+        self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, None, lam=None)
+
+    def comp_obj_trn(self, clf, lam, otherargs):
+        curweight = LinRegGDPoisoner.comp_obj_trn(self, clf, lam, otherargs)
+
+        l1_norm = la.norm(clf.coef_, 1)
+
+        return lam * l1_norm + curweight
+
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
+        r, = otherargs
+        attackx, attacky = LinRegGDPoisoner.comp_attack_trn(self, clf, \
+                                                            wxc, bxc, wyc, byc, otherargs)
+        attackx += self.initlam * np.dot(r, wxc)
+        attacky += self.initlam * np.dot(r, wyc.T)
+        return attackx, attacky
+
+    def compute_r(self, clf, lam):
+        r = LinRegGDPoisoner.compute_r(self, clf, lam)
+        errs = clf.predict(self.trnx) - self.trny
+        r = np.dot(errs, self.trnx)
+        r = -r / self.samplenum
+        return r
+
+    def learn_model(self, x, y, clf, lam=None):
+        if (lam is None and self.initlam != -1):  # hack for first training
+            lam = self.initlam
+        if clf is None:
+            if lam is None:
+                clf = linear_model.LassoCV(max_iter=10000)
+                clf.fit(x, y)
+                lam = clf.alpha_
+            clf = linear_model.Lasso(alpha=lam, \
+                                     max_iter=10000, \
+                                     warm_start=True)
+        clf.fit(x, y)
+        return clf, lam
+
+
+class RidgeGDPoisoner(LinRegGDPoisoner):
+    print("RIGHT")
+
+    def __init__(self, x, y, testx, testy, validx, validy, \
+                 eta, beta, sigma, eps, \
+                 mproc, \
+                 trainfile, resfile, \
+                 objective, opty, colmap):
+        GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
+                            eta, beta, sigma, eps, mproc, \
+                            trainfile, resfile, \
+                            objective, opty, colmap)
+        self.initlam = -1
+        self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, \
+                                                      None, lam=None)
+
+    def comp_obj_trn(self, clf, lam, otherargs):
+        curweight = LinRegGDPoisoner.comp_obj_trn(self, clf, lam, otherargs)
+        l2_norm = la.norm(clf.coef_) / 2
+        return lam * l2_norm + curweight
+
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
+        r, = otherargs
+        attackx, attacky = LinRegGDPoisoner.comp_attack_trn(self, clf, \
+                                                            wxc, bxc, wyc, byc, otherargs)
+
+        attackx += np.dot(r, wxc)
+        attacky += np.dot(r, wyc.T)
+        return attackx, attacky
+
+    def compute_r(self, clf, lam):
+        r = LinRegGDPoisoner.compute_r(self, clf, lam)
+        r += lam * np.matrix(clf.coef_).reshape(1, self.feanum)
+        return r
+
+    def compute_sigma(self):
+        basesigma = LinRegGDPoisoner.compute_sigma(self)
+        sigma = basesigma + self.initlam * np.eye(self.feanum)
+        return sigma
+
+    def learn_model(self, x, y, clf, lam=None):
+        lam = 0.1
+        clf = linear_model.Ridge(alpha=lam, max_iter=10000)
+        clf.fit(x, y)
+        return clf, lam
+
+
 def inf_flip(X_tr, Y_tr, count):
     Y_tr = np.array(Y_tr)
     inv_cov = (0.01 * np.eye(X_tr.shape[1]) + np.dot(X_tr.T, X_tr)) ** -1
@@ -708,10 +911,14 @@ def adaptive(X_tr, Y_tr, count):
   print(Y_pois)
   return np.matrix(X_pois),Y_pois
 
+global colmap
+colmap = {}
 def main(args):
     init = args.initialization
     poi_train_x = pd.read_csv('train_X.csv')
+    poi_train_x = np.matrix(poi_train_x.to_numpy())
     poi_train_y = pd.read_csv('train_y.csv')
+    poi_train_y = poi_train_y['Life Expectancy'].tolist()
     poi_test_x = pd.read_csv('test_X.csv')
     poi_test_y = pd.read_csv('test_y.csv')
     poi_val_x = pd.read_csv('val_X.csv')
@@ -722,13 +929,24 @@ def main(args):
     poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
     print(poisx )
     print(poisy)
-
-
-
-
+    trainfile = open("train.txt", 'w')
+    testfile = open("test.txt", 'w')
+    resfile = open("err.txt", 'w')
+    resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
+    # x, y = open_dataset("Life Expectancy Data.csv", False)
+    genpoiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y,
+                                  args.eta, args.beta, args.sigma, args.epsilon,
+                                  args.multiproc,
+                                  trainfile, resfile, args.objective, args.optimizey, colmap) #
+    clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
+    print(clf)
+    err = genpoiser.computeError(clf)[0]
+    print("Validation Error:", err)
+    # it can compute Validation Error of Lasson,Ridge,OLS poisoning now, but others 2 still can't work
 
 
 #Main
+
 if __name__=='__main__':
     print("starting poison ...\n")
     parser = setup_argparse()
