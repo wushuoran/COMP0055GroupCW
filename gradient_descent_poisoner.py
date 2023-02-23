@@ -2,12 +2,14 @@ from __future__ import division, print_function
 
 import argparse
 #from ast import main
-from bisect import bisect
+import bisect
 from datetime import datetime
 import numpy as np
 import numpy.linalg as la
 import os
 import matplotlib
+from numpy import double
+
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -157,6 +159,7 @@ class GDPoisoner(object):
 
         poisxinit, poisyinit: initial poisoning points
         tstart: start time - used for writing out performance
+        visualize: whether we want to visualize the gradient descent steps
         visualize: whether we want to visualize the gradient descent steps
         newlogdir: directory to log into, to save the visualization
         """
@@ -866,7 +869,6 @@ def inf_flip(X_tr, Y_tr, count):
     yvals = 1 - np.floor(0.5 + Y_tr)
     stat = np.multiply(bests.ravel(), room.ravel())
     stat = stat.tolist()[0]
-    print(stat)
     totalprob = sum(stat)
     allprobs = [0]
     poisinds = []
@@ -1053,8 +1055,11 @@ def main(args):
 
     totprop = args.poisct / (args.poisct + args.trainct)
 
-    poisx, poisy = randflip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
-    print(poisx )
+    # print("poi_train_x: ", poi_train_x, "poi_train_y: ", poi_train_y)
+    para_count = int(args.trainct * totprop / (1 - totprop) + 0.5)
+    print(para_count)
+    poisx, poisy = inf_flip(poi_train_x, poi_train_y, para_count)
+    print(poisx)
     print(poisy)
     trainfile = open("train.txt", 'w')
     testfile = open("test.txt", 'w')
@@ -1067,26 +1072,29 @@ def main(args):
                                   args.multiproc,
                                   trainfile, resfile, args.objective, args.optimizey, colmap) #
     #here need flip
-    poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+    #poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
     # the fliping way can be rmml randflipnobd randflip alfa_tilt, still can't work in inf_flip
     # have not try levfilp cookflip yet
-    clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
-    err = genpoiser.computeError(clf)[0]
-    print("Validation Error:", err)
+    #clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
+    #err = genpoiser.computeError(clf)[0]
+    #print("Validation Error:", err)
     # it can compute Validation Error of Lasson,Ridge,OLS poisoning now, but others 1 still can't work
-    trainfile = open("train.txt", 'w')
-    testfile = open("test.txt", 'w')
-    resfile = open("err.txt", 'w')
-    resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
+    #trainfile = open("train.txt", 'w')
+    #testfile = open("test.txt", 'w')
+    #resfile = open("err.txt", 'w')
+    #resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
     bestpoisx, bestpoisy, besterr = None, None, -1
 
     clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
     print(clf)
+
+
     err = genpoiser.computeError(clf)[0]
     print("Validation Error:", err)
     if err > besterr:
         print("err",err)
         bestpoisx, bestpoisy, besterr = np.copy(poisx), poisy[:], err
+
     poisx, poisy = np.matrix(bestpoisx), bestpoisy
     poiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y, \
                              args.eta, args.beta, args.sigma, args.epsilon, \
@@ -1106,11 +1114,19 @@ def main(args):
         poisedy = poi_train_y + poisresy
         clfp, _ = poiser.learn_model(poisedx,poisedy,None)
         clf = poiser.initclf
-        # print("clfp",clfp)
-        # print("clf2",clf)
+        print("poisres len: ",len(poisres),", poisresy len: ",len(poisresy),", poisedx len: ",len(poisedx),", poisedy len: ",len(poisedy))
+        print("clfp ",clfp,", clf2 ",clf)
+        print(" ")
         errgrd = poiser.computeError(clf)
         err = poiser.computeError(clfp)
-    print()
+
+    print("poi_train_x ", len(poi_train_x),\
+            ", poi_train_y ", len(poi_train_y),\
+            ", poi_test_x", len(poi_test_x),\
+            ", poi_test_y", len(poi_test_y),\
+            ", poi_val_x", len(poi_val_x),\
+            ", poi_val_y", len(poi_val_y))
+    print("")
     print("Unpoisoned")
     print("Validation MSE:", errgrd[0])
     print("Test MSE:", errgrd[1])
