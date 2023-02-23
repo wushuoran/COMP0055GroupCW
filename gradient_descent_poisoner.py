@@ -12,7 +12,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pandas as pd
 from sklearn import linear_model
-
+import datetime
 
 def setup_argparse():
     parser = argparse.ArgumentParser(description='handle poisoning inputs')
@@ -907,10 +907,137 @@ def adaptive(X_tr, Y_tr, count):
   print(Y_pois)
   return np.matrix(X_pois),Y_pois
 
+
+def randflip(X_tr, Y_tr, count):
+  poisinds = np.random.choice(X_tr.shape[0],count,replace=False)
+  print("Points selected: ",poisinds)
+  #Y_pois = [1-Y_tr[i] for i in poisinds]  # this is for validating yopt, not for initialization
+  Y_pois = [1 if 1-Y_tr[i]>0.5 else 0 for i in poisinds]  # this is the flip all the way implementation
+  return np.matrix(X_tr[poisinds]), Y_pois
+
+def randflipnobd(X_tr, Y_tr, count):
+  poisinds = np.random.choice(X_tr.shape[0],count,replace=False)
+  print("Points selected: ",poisinds)
+  Y_pois = [1-Y_tr[i] for i in poisinds]  # this is for validating yopt, not for initialization
+  #Y_pois = [1 if 1-Y_tr[i]>0.5 else 0 for i in poisinds]  # this is the flip all the way implementation
+  return np.matrix(X_tr[poisinds]), Y_pois
+
+def rmml(X_tr,Y_tr, count):
+  print(X_tr.shape, len(Y_tr), count)
+  mean = np.ravel(X_tr.mean(axis=0))#.reshape(1,-1)
+  covar = np.dot((X_tr-mean).T,(X_tr-mean))/X_tr.shape[0] + 0.01*np.eye(X_tr.shape[1])
+  model = linear_model.Ridge(alpha=.01)
+  model.fit(X_tr,Y_tr)
+  allpoisx = np.random.multivariate_normal(mean,covar,size=count)
+  allpoisx[allpoisx>=0.5] = 1
+  allpoisx[allpoisx<0.5] = 0
+  poisy = model.predict(allpoisx)
+  poisy = 1- poisy
+  poisy[poisy>=0.5] = 1
+  poisy[poisy<0.5] = 0
+  print(allpoisx.shape,poisy.shape)
+  for i in range(count):
+    curpoisxelem = allpoisx[i,:]
+    for col in colmap:
+      vals = [(curpoisxelem[j],j) for j in colmap[col]]
+      topval,topcol = max(vals)
+      for j in colmap[col]:
+        if j!=topcol:
+          curpoisxelem[j]=0
+      if topval>1/(1+len(colmap[col])):
+        curpoisxelem[topcol]=1
+      else:
+        curpoisxelem[topcol]=0
+    allpoisx[i]=curpoisxelem
+  return np.matrix(allpoisx),poisy.tolist()
+
+
+def alfa_tilt(X_tr, Y_tr, count):
+    inv_cov = (0.01 * np.eye(X_tr.shape[1]) + np.dot(X_tr.T, X_tr)) ** -1
+    H = np.dot(np.dot(X_tr, inv_cov), X_tr.T)
+    randplane = np.random.standard_normal(size=X_tr.shape[1] + 1)
+    w, b = randplane[:-1], randplane[-1]
+    preds = np.dot(X_tr, w) + b
+    yvals = preds.clip(0, 1)
+    yvals = 1 - np.floor(0.5 + yvals)
+    diff = yvals - Y_tr
+    print(diff)
+    yvals = yvals.tolist()[0]
+    changes = np.dot(diff, H).tolist()[0]
+    changes = [max(a, 0) for a in changes]
+
+    totalprob = sum(changes)
+    allprobs = [0]
+    poisinds = []
+    for i in range(X_tr.shape[0]):
+        allprobs.append(allprobs[-1] + changes[i])
+    allprobs = allprobs[1:]
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        poisinds.append(bisect.bisect_left(allprobs, a))
+    return X_tr[poisinds], [yvals[a] for a in poisinds]
+
+
+def levflip(x, y, count, poiser):
+    allpoisy = []
+    clf, _ = poiser.learn_model(x, y, None)
+    mean = np.ravel(x.mean(axis=0))  # .reshape(1,-1)
+    corr = np.dot(x.T, x) + 0.01 * np.eye(x.shape[1])
+    invmat = np.linalg.pinv(corr)
+    hmat = x * invmat * np.transpose(x)
+
+    alllevs = [hmat[i, i] for i in range(x.shape[0])]
+    totalprob = sum(alllevs)
+    allprobs = [0]
+    for i in range(len(alllevs)):
+        allprobs.append(allprobs[-1] + alllevs[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        curind = bisect.bisect_left(allprobs, a)
+        poisinds.append(curind)
+        if clf.predict(x[curind].reshape(1, -1)) < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
+# -------------------------------------------------------------------------------
+def cookflip(x, y, count, poiser):
+    allpoisy = []
+    clf, _ = poiser.learn_model(x, y, None)
+    preds = [clf.predict(x[i].reshape(1, -1)) for i in range(x.shape[0])]
+    errs = [(y[i] - preds[i]) ** 2 for i in range(x.shape[0])]
+    mean = np.ravel(x.mean(axis=0))  # .reshape(1,-1)
+    corr = np.dot(x.T, x) + 0.01 * np.eye(x.shape[1])
+    invmat = np.linalg.pinv(corr)
+    hmat = x * invmat * np.transpose(x)
+
+    allcooks = [hmat[i, i] * errs[i] / (1 - hmat[i, i]) ** 2 for i in range(x.shape[0])]
+
+    totalprob = sum(allcooks)
+
+    allprobs = [0]
+    for i in range(len(allcooks)):
+        allprobs.append(allprobs[-1] + allcooks[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        curind = bisect.bisect_left(allprobs, a)
+        poisinds.append(curind)
+        if clf.predict(x[curind].reshape(1, -1)) < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
 global colmap
 colmap = {}
 def main(args):
-    init = args.initialization
     poi_train_x = pd.read_csv('train_X.csv')
     poi_train_x = np.matrix(poi_train_x.to_numpy())
     poi_train_y = pd.read_csv('train_y.csv')
@@ -925,24 +1052,71 @@ def main(args):
     poi_val_y = poi_val_y['Life Expectancy'].tolist()
 
     totprop = args.poisct / (args.poisct + args.trainct)
-    #poisx,poisy = inf_flip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
-    poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+
+    poisx, poisy = randflip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
     print(poisx )
     print(poisy)
     trainfile = open("train.txt", 'w')
     testfile = open("test.txt", 'w')
     resfile = open("err.txt", 'w')
     resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
-    # x, y = open_dataset("Life Expectancy Data.csv", False)
+    # can be  LinRegGDPoisoner and RidgeGDPoisoner
+    # still working on fixing the ENetGDPoisoner
     genpoiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y,
                                   args.eta, args.beta, args.sigma, args.epsilon,
                                   args.multiproc,
                                   trainfile, resfile, args.objective, args.optimizey, colmap) #
+    #here need flip
+    poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+    # the fliping way can be rmml randflipnobd randflip alfa_tilt, still can't work in inf_flip
+    # have not try levfilp cookflip yet
+    clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
+    err = genpoiser.computeError(clf)[0]
+    print("Validation Error:", err)
+    # it can compute Validation Error of Lasson,Ridge,OLS poisoning now, but others 1 still can't work
+    trainfile = open("train.txt", 'w')
+    testfile = open("test.txt", 'w')
+    resfile = open("err.txt", 'w')
+    resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
+    bestpoisx, bestpoisy, besterr = None, None, -1
+
     clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
     print(clf)
     err = genpoiser.computeError(clf)[0]
     print("Validation Error:", err)
-    # it can compute Validation Error of Lasson,Ridge,OLS poisoning now, but others 2 still can't work
+    if err > besterr:
+        print("err",err)
+        bestpoisx, bestpoisy, besterr = np.copy(poisx), poisy[:], err
+    poisx, poisy = np.matrix(bestpoisx), bestpoisy
+    poiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y, \
+                             args.eta, args.beta, args.sigma, args.epsilon, \
+                             args.multiproc, trainfile, resfile, \
+                             args.objective, args.optimizey, colmap)
+    for i in  range(5):
+        curprop = (i + 1)*totprop/5
+        numsamples = int(0.5 + args.trainct*(curprop/(1 - curprop)))
+        curpoisx = poisx[:numsamples,:]
+        curpoisy = poisy[:numsamples]
+        trainfile.write("\n")
+        timestart = datetime.datetime.now()
+        newlogdir = 'a.jpg'
+        poisres, poisresy = poiser.poison_data(curpoisx, curpoisy, timestart, False, newlogdir)
+        print(poisres.shape,poi_train_x.shape)
+        poisedx = np.concatenate((poi_train_x,poisres),axis = 0)
+        poisedy = poi_train_y + poisresy
+        clfp, _ = poiser.learn_model(poisedx,poisedy,None)
+        clf = poiser.initclf
+        # print("clfp",clfp)
+        # print("clf2",clf)
+        errgrd = poiser.computeError(clf)
+        err = poiser.computeError(clfp)
+    print()
+    print("Unpoisoned")
+    print("Validation MSE:", errgrd[0])
+    print("Test MSE:", errgrd[1])
+    print('Poisoned:')
+    print("Validation MSE:", err[0])
+    print("Test MSE:", err[1])
 
 
 #Main
