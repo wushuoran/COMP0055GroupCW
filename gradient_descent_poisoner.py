@@ -952,6 +952,151 @@ def rmml(X_tr,Y_tr, count):
   return np.matrix(allpoisx),poisy.tolist()
 
 
+def infflip(x, y, count, poiser):
+    mean = np.ravel(x.mean(axis=0))  # .reshape(1,-1)
+    corr = np.dot(x.T, x) + 0.01 * np.eye(x.shape[1])
+    invmat = np.linalg.pinv(corr)
+    hmat = x * invmat * np.transpose(x)
+    allgains = []
+    for i in range(x.shape[0]):
+        posgain = (np.sum(hmat[i]) * (1 - y[i]), 1)
+        neggain = (np.sum(hmat[i]) * y[i], 0)
+        allgains.append(max(posgain, neggain))
+
+    totalprob = sum([a[0] for a in allgains])
+    allprobs = [0]
+    for i in range(len(allgains)):
+        allprobs.append(allprobs[-1] + allgains[i][0])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        poisinds.append(bisect.bisect_left(allprobs, a))
+    gainsy = [allgains[ind][1] for ind in poisinds]
+
+    # sortedgains = sorted(enumerate(allgains),key = lambda tup: tup[1])[:count]
+    # poisinds = [a[0] for a in sortedgains]
+    # bestgains = [a[1][1] for a in sortedgains]
+
+    return x[poisinds], gainsy
+
+
+# -------------------------------------------------------------------------------
+def levflip(x, y, count, poiser):
+    allpoisy = []
+    clf, _ = poiser.learn_model(x, y, None)
+    mean = np.ravel(x.mean(axis=0))  # .reshape(1,-1)
+    corr = np.dot(x.T, x) + 0.01 * np.eye(x.shape[1])
+    invmat = np.linalg.pinv(corr)
+    hmat = x * invmat * np.transpose(x)
+
+    alllevs = [hmat[i, i] for i in range(x.shape[0])]
+    totalprob = sum(alllevs)
+    allprobs = [0]
+    for i in range(len(alllevs)):
+        allprobs.append(allprobs[-1] + alllevs[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        curind = bisect.bisect_left(allprobs, a)
+        poisinds.append(curind)
+        if clf.predict(x[curind].reshape(1, -1)) < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
+
+# -------------------------------------------------------------------------------
+def cookflip(x, y, count, poiser):
+    allpoisy = []
+    clf, _ = poiser.learn_model(x, y, None)
+    preds = [clf.predict(x[i].reshape(1, -1)) for i in range(x.shape[0])]
+    errs = [(y[i] - preds[i]) ** 2 for i in range(x.shape[0])]
+    mean = np.ravel(x.mean(axis=0))  # .reshape(1,-1)
+    corr = np.dot(x.T, x) + 0.01 * np.eye(x.shape[1])
+    invmat = np.linalg.pinv(corr)
+    hmat = x * invmat * np.transpose(x)
+
+    allcooks = [hmat[i, i] * errs[i] / (1 - hmat[i, i]) ** 2 for i in range(x.shape[0])]
+
+    totalprob = sum(allcooks)
+
+    allprobs = [0]
+    for i in range(len(allcooks)):
+        allprobs.append(allprobs[-1] + allcooks[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        curind = bisect.bisect_left(allprobs, a)
+        poisinds.append(curind)
+        if clf.predict(x[curind].reshape(1, -1)) < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
+
+# -------------------------------------------------------------------------------
+def farthestfirst(x, y, count, poiser):
+    allpoisy = []
+    clf, _ = poiser.learn_model(x, y, None)
+    preds = [clf.predict(x[i].reshape(1, -1)) for i in range(x.shape[0])]
+    errs = [(y[i] - preds[i]) ** 2 for i in range(x.shape[0])]
+    totalprob = sum(errs)
+    allprobs = [0]
+    for i in range(len(errs)):
+        allprobs.append(allprobs[-1] + errs[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        curind = bisect.bisect_left(allprobs, a)
+        poisinds.append(curind)
+        if preds[curind] < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
+
+# -------------------------------------------------------------------------------
+def alfatilt(x, y, count, poiser):
+    trueclf, _ = poiser.learn_model(x, y, None)
+    truepreds = trueclf.predict(x)
+
+    goalmodel = np.random.uniform(low=-1 / sqrt(x.shape[1]), high=1 / sqrt(x.shape[1]), shape=(x.shape[1] + 1))
+    goalpreds = np.dot(x, goalmodel[:-1]) + goalmodel[-1].item()
+
+    svals = np.square(trueclf.predict(x) - y)  # squared error
+    svals = svals / svals.max()
+    qvals = np.square(goalpreds - y)
+    qvals = qvals / qvals.max()
+
+    flipscores = (svals + qvals).tolist()
+
+    totalprob = sum(flipscores)
+    allprobs = [0]
+    allpoisy = []
+    for i in range(len(flipscores)):
+        allprobs.append(allprobs[-1] + flipscores[i])
+    allprobs = allprobs[1:]
+    poisinds = []
+    for i in range(count):
+        a = np.random.uniform(low=0, high=totalprob)
+        poisinds.append(bisect.bisect_left(allprobs, a))
+        if truepreds[curind] < 0.5:
+            allpoisy.append(1)
+        else:
+            allpoisy.append(0)
+
+    return x[poisinds], allpoisy
+
 def alfa_tilt(X_tr, Y_tr, count):
     inv_cov = (0.01 * np.eye(X_tr.shape[1]) + np.dot(X_tr.T, X_tr)) ** -1
     H = np.dot(np.dot(X_tr, inv_cov), X_tr.T)
@@ -1053,9 +1198,8 @@ def main(args):
 
     totprop = args.poisct / (args.poisct + args.trainct)
 
-    poisx, poisy = randflip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
-    print(poisx )
-    print(poisy)
+
+
     trainfile = open("train.txt", 'w')
     testfile = open("test.txt", 'w')
     resfile = open("err.txt", 'w')
@@ -1066,10 +1210,11 @@ def main(args):
                                   args.eta, args.beta, args.sigma, args.epsilon,
                                   args.multiproc,
                                   trainfile, resfile, args.objective, args.optimizey, colmap) #
-    #here need flip
-    poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
+    # if need to use infflip levflip cookflip farthestfirst alfatilt fliping way
+    # add parameter "genpoiser" at the end of it
+    poisx, poisy = randflip(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
     # the fliping way can be rmml randflipnobd randflip alfa_tilt, still can't work in inf_flip
-    # have not try levfilp cookflip yet
+    # add "genpoiser" to levfilp cookflip yet
     clf, _ = genpoiser.learn_model(np.concatenate((poi_train_x, poisx), axis=0), poi_train_y + poisy, None)
     err = genpoiser.computeError(clf)[0]
     print("Validation Error:", err)
