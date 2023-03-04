@@ -84,10 +84,7 @@ def setup_argparse():
 
 class GDPoisoner(object):
     def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, \
-                 mproc, \
-                 trainfile, resfile, \
-                 objective, opty, colmap):
+                 eta, beta, sigma, eps,opty):
         """
         GDPoisoner handles gradient descent and poisoning routines
         Computations for specific models found in respective classes
@@ -121,36 +118,36 @@ class GDPoisoner(object):
         self.samplenum = x.shape[0]
         self.feanum = x.shape[1]
 
-        self.objective = objective
+        # self.objective = objective
         self.opty = opty
 
-        if (objective == 0):  # training MSE + regularization
-            self.attack_comp = self.comp_attack_trn
-            self.obj_comp = self.comp_obj_trn
+        # if (objective == 0):  # training MSE + regularization
+        self.attack_comp = self.comp_attack_trn
+        self.obj_comp = self.comp_obj_trn
 
-        elif (objective == 1):  # validation MSE
-            self.attack_comp = self.comp_attack_vld
-            self.obj_comp = self.comp_obj_vld
+        # elif (objective == 1):  # validation MSE
+        #     self.attack_comp = self.comp_attack_vld
+        #     self.obj_comp = self.comp_obj_vld
+        #
+        # elif (objective == 2):  # l2 distance between clean and poisoned
+        #     self.attack_comp = self.comp_attack_l2
+        #     self.obj_comp = self.comp_obj_new
+        #
+        # else:
+        #     raise NotImplementedError
 
-        elif (objective == 2):  # l2 distance between clean and poisoned
-            self.attack_comp = self.comp_attack_l2
-            self.obj_comp = self.comp_obj_new
-
-        else:
-            raise NotImplementedError
-
-        self.mp = mproc  # use multiprocessing?
+        # self.mp = mproc  # use multiprocessing?
 
         self.eta = eta
         self.beta = beta
         self.sigma = sigma
         self.eps = eps
 
-        self.trainfile = trainfile
-        self.resfile = resfile
+        # self.trainfile = trainfile
+        # self.resfile = resfile
         self.initclf, self.initlam = None, None
 
-        self.colmap = colmap
+        # self.colmap = colmap
 
     def poison_data(self, poisx, poisy, tstart, visualize, newlogdir):
         """
@@ -167,18 +164,18 @@ class GDPoisoner(object):
         poisct = poisx.shape[0]
         print("Poison Count: {}".format(poisct))
 
-        new_poisx = np.zeros(poisx.shape)
-        new_poisy = [None for a in poisy]
+        # new_poisx = np.zeros(poisx.shape)
+        # new_poisy = [None for a in poisy]
 
-        if visualize:
-            # initialize poisoning histories
-            poisx_hist = np.zeros(
-                (10, poisx.shape[0], poisx.shape[1]))
-            poisy_hist = np.zeros((10, poisx.shape[0]))
-
-            # store first round
-            poisx_hist[0] = poisxinit[:]
-            poisy_hist[0] = np.array(poisy)
+        # if visualize:
+        #     # initialize poisoning histories
+        #     poisx_hist = np.zeros(
+        #         (10, poisx.shape[0], poisx.shape[1]))
+        #     poisy_hist = np.zeros((10, poisx.shape[0]))
+        #
+        #     # store first round
+        #     poisx_hist[0] = poisxinit[:]
+        #     poisy_hist[0] = np.array(poisy)
 
         best_poisx = np.zeros(poisx.shape)
         best_poisy = [None for a in poisy]
@@ -187,13 +184,13 @@ class GDPoisoner(object):
         last_obj = 0
         count = 0
 
-        if self.mp:
-            import multiprocessing as mp
-            workerpool = mp.Pool(max(1, mp.cpu_count() // 2 - 1))
-        else:
-            workerpool = None
+
+        import multiprocessing as mp
+        workerpool = mp.Pool(max(1, mp.cpu_count() // 2 - 1))
+
 
         sig = self.compute_sigma()  # can already compute sigma and mu
+        # different reg has different
         mu = self.compute_mu()  # as x_c does not change them
         eq7lhs = np.bmat([[sig, np.transpose(mu)],
                           [mu, np.matrix([1])]])
@@ -210,27 +207,27 @@ class GDPoisoner(object):
         print("Validation MSE: {}".format(it_res[2][0]))
         print("Test MSE: {}".format(it_res[2][1]))
 
-        last_obj = it_res[0]
+        # last_obj = it_res[0]
         if it_res[0] > best_obj:
             best_poisx, best_poisy, best_obj = poisx, poisy, it_res[0]
 
         # stuff to put into self.resfile
-        towrite = [poisct, count, it_res[0], it_res[1], \
-                   it_res[2][0], it_res[2][1], \
-                   (datetime.datetime.now() - tstart).total_seconds()]
+        # towrite = [poisct, count, it_res[0], it_res[1], \
+        #            it_res[2][0], it_res[2][1], \
+        #            (datetime.datetime.now() - tstart).total_seconds()]
 
-        self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
-        self.trainfile.write("\n")
-        self.trainfile.write(str(poisct) + "," + str(count) + '\n')
+        # self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
+        # self.trainfile.write("\n")
+        # self.trainfile.write(str(poisct) + "," + str(count) + '\n')
 
-        if visualize:
-            self.trainfile.write('{},{}\n'.format(poisy[0], new_poisx[0]))
-        else:
-            for j in range(poisct):
-                self.trainfile.write(','.join(
-                    [str(val) for val
-                     in [poisy[j]] + poisx[j].tolist()[0] \
-                     ]) + '\n')
+        # if visualize:
+        #     self.trainfile.write('{},{}\n'.format(poisy[0], new_poisx[0]))
+        # else:
+        #     for j in range(poisct):
+        #         self.trainfile.write(','.join(
+        #             [str(val) for val
+        #              in [poisy[j]] + poisx[j].tolist()[0] \
+        #              ]) + '\n')
 
         # main work loop
         while True:
@@ -253,20 +250,20 @@ class GDPoisoner(object):
                     new_poisy[i] = cur_pois_res[1]
                     outofboundsct += cur_pois_res[2]
 
-            else:
-                for i in range(poisct):
-                    cur_pois_res = self.poison_data_subroutine(pois_params[i])
+            # else:
+            # for i in range(poisct):
+            #     cur_pois_res = self.poison_data_subroutine(pois_params[i])
+            #
+            #     new_poisx[i] = cur_pois_res[0]
+            #     new_poisy[i] = cur_pois_res[1]
+            #     outofboundsct += cur_pois_res[2]
 
-                    new_poisx[i] = cur_pois_res[0]
-                    new_poisy[i] = cur_pois_res[1]
-                    outofboundsct += cur_pois_res[2]
-
-            if visualize:
-                poisx_hist[count] = new_poisx[:]
-                poisy_hist[count] = np.array(new_poisy).ravel()
-
-            it_res = self.iter_progress(poisx, poisy, new_poisx, new_poisy)
-
+            # if visualize:
+            #     poisx_hist[count] = new_poisx[:]
+            #     poisy_hist[count] = np.array(new_poisy).ravel()
+            #
+            # it_res = self.iter_progress(poisx, poisy, new_poisx, new_poisy)
+            #
             print("Iteration {}:".format(count))
             print("Objective Value: {} Change: {}".format(
                 it_res[0], it_res[0] - it_res[1]))
@@ -294,127 +291,128 @@ class GDPoisoner(object):
                        it_res[2][0], it_res[2][1], \
                        (datetime.datetime.now() - tstart).total_seconds()]
 
-            self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
-            self.trainfile.write("\n{},{}\n".format(poisct, count))
-
-            for j in range(poisct):
-                self.trainfile.write(','.join([str(val) for val in
-                                               [new_poisy[j]] + new_poisx[j].tolist()[0]
-                                               ]) + '\n')
+            # self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
+            # self.trainfile.write("\n{},{}\n".format(poisct, count))
+            #
+            # for j in range(poisct):
+            #     self.trainfile.write(','.join([str(val) for val in
+            #                                    [new_poisy[j]] + new_poisx[j].tolist()[0]
+            #                                    ]) + '\n')
             it_diff = abs(it_res[0] - it_res[1])
 
             # stopping conditions
             if (count >= 15 and (it_diff <= self.eps or count > 50)):
                 break
-
+            #可变
             # visualization done - plotting time
-            if (visualize and count >= 9):
-                self.plot_path(clf_init, lam_init, eq7lhs, mu, \
-                               poisx_hist, poisy_hist, newlogdir)
-                break
+            # if (visualize and count >= 9):
+            #     self.plot_path(clf_init, lam_init, eq7lhs, mu, \
+            #                    poisx_hist, poisy_hist, newlogdir)
+            #     break
 
-        if workerpool:
-            workerpool.close()
+        # if workerpool:
+        #     workerpool.close()
 
         return best_poisx, best_poisy
 
-    def plot_path(self, clf, lam, eq7lhs, mu, \
-                  poisx_hist, poisy_hist, newlogdir):
-        """
-        plot_path makes a pretty picture of the gradient descent path
+    # def plot_path(self, clf, lam, eq7lhs, mu, \
+    #               poisx_hist, poisy_hist, newlogdir):
+    #     """
+    #     plot_path makes a pretty picture of the gradient descent path
+    #
+    #     clf: initial model
+    #     lam: regularization coef
+    #     eq7lhs, mu: needed for gradient
+    #     poisx_hist, poisy_hist: path of poisoning
+    #     newlogdir: directory to save pretty picture to
+    #     """
+    #
+    #     plt.plot(self.x, self.y, 'k.')
+    #     x_line = np.linspace(0, 1, 10)
+    #     y_line = x_line * clf.coef_ + clf.intercept_
+    #     plt.plot(x_line, y_line, 'k-')
+    #
+    #     # plot function value colors
+    #     self.plot_func(self.obj_comp)
+    #
+    #     # plot gradient vector field
+    #     self.plot_grad(clf, lam, eq7lhs, mu)
+    #
+    #     # plot path of poisoning pt
+    #     for i in range(poisx_hist.shape[1]):
+    #         # plot start, path, and end
+    #         plt.plot(poisx_hist[0, i, :], poisy_hist[0, i], 'g.', markersize=10)
+    #         plt.plot(poisx_hist[:, i, :], poisy_hist[:, i], 'g-', linewidth=3)
+    #         plt.plot(poisx_hist[-1, i, :], poisy_hist[-1, i], 'g*', markersize=10)
+    #
+    #     plt.xlabel('x')
+    #     plt.ylabel('y')
+    #     plt.xlim(-0.1, 1.1)
+    #     plt.ylim(-0.1, 1.1)
+    #     # plt.tight_layout() # whatever looks better
+    #     plt.savefig(os.path.join(newlogdir, 'vis2d.png'))
+        #可删
 
-        clf: initial model
-        lam: regularization coef
-        eq7lhs, mu: needed for gradient
-        poisx_hist, poisy_hist: path of poisoning
-        newlogdir: directory to save pretty picture to
-        """
-
-        plt.plot(self.x, self.y, 'k.')
-        x_line = np.linspace(0, 1, 10)
-        y_line = x_line * clf.coef_ + clf.intercept_
-        plt.plot(x_line, y_line, 'k-')
-
-        # plot function value colors
-        self.plot_func(self.obj_comp)
-
-        # plot gradient vector field
-        self.plot_grad(clf, lam, eq7lhs, mu)
-
-        # plot path of poisoning pt
-        for i in range(poisx_hist.shape[1]):
-            # plot start, path, and end
-            plt.plot(poisx_hist[0, i, :], poisy_hist[0, i], 'g.', markersize=10)
-            plt.plot(poisx_hist[:, i, :], poisy_hist[:, i], 'g-', linewidth=3)
-            plt.plot(poisx_hist[-1, i, :], poisy_hist[-1, i], 'g*', markersize=10)
-
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.xlim(-0.1, 1.1)
-        plt.ylim(-0.1, 1.1)
-        # plt.tight_layout() # whatever looks better
-        plt.savefig(os.path.join(newlogdir, 'vis2d.png'))
-
-    def plot_func(self, f, min_x=0, max_x=1, \
-                  resolution=0.1):
-        """
-        plot_func plots a heatmap of the objective function
-
-        f: objective function
-        min_x: smallest value of x desired in the heatmap
-        max_x: largest value of x desired in the heatmap
-        resolution: granularity of heatmap
-        """
-
-        xx1, xx2 = np.meshgrid(
-            np.arange(min_x, max_x + resolution, resolution),
-            np.arange(min_x, max_x + resolution, resolution))
-
-        grid_x = np.array([xx1.ravel(), xx2.ravel()]).T
-        z = np.zeros(shape=(grid_x.shape[0],))
-
-        for i in range(grid_x.shape[0]):
-            poisx = np.concatenate(
-                (self.trnx, grid_x[i][0].reshape((1, 1))), axis=0)
-            poisy = self.trny + [grid_x[i][1].item()]
-            clf, lam = self.learn_model(poisx, poisy, None)
-            z[i] = f(clf, lam, None)
-
-        z = z.reshape(xx1.shape)
-        plt.contourf(xx1, xx2, z, 30, cmap='jet', alpha=0.7)
-        plt.colorbar()
-        plt.xlim(xx1.min(), xx1.max())
-        plt.ylim(xx2.min(), xx2.max())
-
-    def plot_grad(self, clf, lam, eq7lhs, mu, min_x=0, max_x=1, resolution=0.1):
-        """
-        plot_grad plots vector field for gradients of the objective function
-
-        clf, lam, eq7lhs, mu: values needed for gradient computation
-        min_x: smallest value of x desired in the vector field
-        max_x: largest value of x desired in the vector field
-        resolution: spacing between arrows
-        """
-
-        xx1, xx2 = np.meshgrid(
-            np.arange(min_x, max_x + resolution, resolution),
-            np.arange(min_x, max_x + resolution, resolution))
-
-        grid_x = np.array([xx1.ravel(), xx2.ravel()]).T
-        z = np.zeros(shape=(grid_x.shape[0], 2))
-
-        for i in range(grid_x.shape[0]):
-            clf, lam = self.learn_model(
-                np.concatenate((self.trnx,
-                                grid_x[i, 0].reshape((1, 1))),
-                               axis=0),
-                self.trny + [self.x[i, 1]], None)
-            z[i, 0], z[i, 1] = self.comp_grad_dummy(eq7lhs, mu, clf, lam, \
-                                                    self.x[i, 0].reshape((1, 1)), self.x[i, 1])
-
-        U = z[:, 0]
-        V = z[:, 1]
-        plt.quiver(xx1, xx2, U, V)
+    # def plot_func(self, f, min_x=0, max_x=1, \
+    #               resolution=0.1):
+    #     """
+    #     plot_func plots a heatmap of the objective function
+    #
+    #     f: objective function
+    #     min_x: smallest value of x desired in the heatmap
+    #     max_x: largest value of x desired in the heatmap
+    #     resolution: granularity of heatmap
+    #     """
+    #
+    #     xx1, xx2 = np.meshgrid(
+    #         np.arange(min_x, max_x + resolution, resolution),
+    #         np.arange(min_x, max_x + resolution, resolution))
+    #
+    #     grid_x = np.array([xx1.ravel(), xx2.ravel()]).T
+    #     z = np.zeros(shape=(grid_x.shape[0],))
+    #
+    #     for i in range(grid_x.shape[0]):
+    #         poisx = np.concatenate(
+    #             (self.trnx, grid_x[i][0].reshape((1, 1))), axis=0)
+    #         poisy = self.trny + [grid_x[i][1].item()]
+    #         clf, lam = self.learn_model(poisx, poisy, None)
+    #         z[i] = f(clf, lam, None)
+    #
+    #     z = z.reshape(xx1.shape)
+    #     plt.contourf(xx1, xx2, z, 30, cmap='jet', alpha=0.7)
+    #     plt.colorbar()
+    #     plt.xlim(xx1.min(), xx1.max())
+    #     plt.ylim(xx2.min(), xx2.max())
+    #
+    # def plot_grad(self, clf, lam, eq7lhs, mu, min_x=0, max_x=1, resolution=0.1):
+    #     """
+    #     plot_grad plots vector field for gradients of the objective function
+    #
+    #     clf, lam, eq7lhs, mu: values needed for gradient computation
+    #     min_x: smallest value of x desired in the vector field
+    #     max_x: largest value of x desired in the vector field
+    #     resolution: spacing between arrows
+    #     """
+    #
+    #     xx1, xx2 = np.meshgrid(
+    #         np.arange(min_x, max_x + resolution, resolution),
+    #         np.arange(min_x, max_x + resolution, resolution))
+    #
+    #     grid_x = np.array([xx1.ravel(), xx2.ravel()]).T
+    #     z = np.zeros(shape=(grid_x.shape[0], 2))
+    #
+    #     for i in range(grid_x.shape[0]):
+    #         clf, lam = self.learn_model(
+    #             np.concatenate((self.trnx,
+    #                             grid_x[i, 0].reshape((1, 1))),
+    #                            axis=0),
+    #             self.trny + [self.x[i, 1]], None)
+    #         z[i, 0], z[i, 1] = self.comp_grad_dummy(eq7lhs, mu, clf, lam, \
+    #                                                 self.x[i, 0].reshape((1, 1)), self.x[i, 1])
+    #
+    #     U = z[:, 0]
+    #     V = z[:, 1]
+    #     plt.quiver(xx1, xx2, U, V)
 
     def comp_grad_dummy(self, eq7lhs, mu, clf, lam, poisx, poisy):
         """
@@ -459,11 +457,11 @@ class GDPoisoner(object):
         wxc, bxc, wyc, byc = self.compute_wb_zc(eq7lhs, mu, clf.coef_, m, \
                                                 self.samplenum, poisxelem)
 
-        if (self.objective == 0):
-            r = self.compute_r(clf, lam)
-            otherargs = (r,)
-        else:
-            otherargs = None
+        # if (self.objective == 0):
+        r = self.compute_r(clf, lam)
+        otherargs = (r,)
+        # else:
+        #     otherargs = None
 
         attack, attacky = self.attack_comp(clf, wxc, bxc, wyc, byc, otherargs)
 
@@ -580,7 +578,7 @@ class GDPoisoner(object):
             w_1 = w_2
             k += 1
 
-        for col in self.colmap:
+        for col in colmap:
             vals = [(curpoisxelem[0, j], j) for j in self.colmap[col]]
             topval, topcol = max(vals)
             for j in self.colmap[col]:
@@ -664,10 +662,7 @@ class LinRegGDPoisoner(GDPoisoner):
     print("Linge")
 
     def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, \
-                 mproc, \
-                 trainfile, resfile, \
-                 objective, opty, colmap):
+                 eta, beta, sigma, eps, opty):
         """
         LinRegGDPoisoner implements computations for ordinary least
         squares regression. Computations involving regularization are
@@ -677,9 +672,7 @@ class LinRegGDPoisoner(GDPoisoner):
         """
 
         GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                            eta, beta, sigma, eps, mproc, \
-                            trainfile, resfile, \
-                            objective, opty, colmap)
+                            eta, beta, sigma, eps, opty)
 
         self.x = x
         self.y = y
@@ -764,14 +757,9 @@ class LassoGDPoisoner(LinRegGDPoisoner):
     print("LassG")
 
     def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, \
-                 mproc, \
-                 trainfile, resfile, \
-                 objective, opty, colmap):
+                 eta, beta, sigma, eps, opty):
         GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                            eta, beta, sigma, eps, mproc, \
-                            trainfile, resfile, \
-                            objective, opty, colmap)
+                            eta, beta, sigma, eps, opty)
 
         self.initlam = -1
         self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, None, lam=None)
@@ -817,14 +805,9 @@ class RidgeGDPoisoner(LinRegGDPoisoner):
     print("RIGHT")
 
     def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, \
-                 mproc, \
-                 trainfile, resfile, \
-                 objective, opty, colmap):
+                 eta, beta, sigma, eps, opty):
         GDPoisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                            eta, beta, sigma, eps, mproc, \
-                            trainfile, resfile, \
-                            objective, opty, colmap)
+                            eta, beta, sigma, eps, opty)
         self.initlam = -1
         self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, \
                                                       None, lam=None)
@@ -1041,7 +1024,9 @@ global colmap
 colmap = {}
 def main(args):
     poi_train_x = pd.read_csv('train_X.csv')
+    print("poiorishaoe",poi_train_x.shape[0])
     poi_train_x = np.matrix(poi_train_x.to_numpy())
+    print("poishape",poi_train_x.shape)
     poi_train_y = pd.read_csv('train_y.csv')
     poi_train_y = poi_train_y['Life Expectancy'].tolist()
     poi_test_x = pd.read_csv('test_X.csv')
@@ -1058,19 +1043,18 @@ def main(args):
     # print("poi_train_x: ", poi_train_x, "poi_train_y: ", poi_train_y)
     para_count = int(args.trainct * totprop / (1 - totprop) + 0.5)
     print(para_count)
+
+    # trainfile = open("train.txt", 'w')
+    testfile = open("test.txt", 'w')
+    # resfile = open("err.txt", 'w')
+    # resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
+    # can be  LinRegGDPoisoner and RidgeGDPoisoner
+    # still working on fixing the ENetGDPoisoner
+    genpoiser = LinRegGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y,
+                                  args.eta, args.beta, args.sigma, args.epsilon, args.optimizey) #
     poisx, poisy = inf_flip(poi_train_x, poi_train_y, para_count)
     print(poisx)
     print(poisy)
-    trainfile = open("train.txt", 'w')
-    testfile = open("test.txt", 'w')
-    resfile = open("err.txt", 'w')
-    resfile.write('poisct,itnum,obj_diff,obj_val,val_mse,test_mse,time\n')
-    # can be  LinRegGDPoisoner and RidgeGDPoisoner
-    # still working on fixing the ENetGDPoisoner
-    genpoiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y,
-                                  args.eta, args.beta, args.sigma, args.epsilon,
-                                  args.multiproc,
-                                  trainfile, resfile, args.objective, args.optimizey, colmap) #
     #here need flip
     #poisx, poisy = adaptive(poi_train_x, poi_train_y, int(args.trainct * totprop / (1 - totprop) + 0.5))
     # the fliping way can be rmml randflipnobd randflip alfa_tilt, still can't work in inf_flip
@@ -1097,15 +1081,13 @@ def main(args):
 
     poisx, poisy = np.matrix(bestpoisx), bestpoisy
     poiser = LassoGDPoisoner(poi_train_x, poi_train_y, poi_test_x, poi_test_y, poi_val_x, poi_val_y, \
-                             args.eta, args.beta, args.sigma, args.epsilon, \
-                             args.multiproc, trainfile, resfile, \
-                             args.objective, args.optimizey, colmap)
+                             args.eta, args.beta, args.sigma, args.epsilon, args.optimizey)
     for i in  range(5):
         curprop = (i + 1)*totprop/5
         numsamples = int(0.5 + args.trainct*(curprop/(1 - curprop)))
         curpoisx = poisx[:numsamples,:]
         curpoisy = poisy[:numsamples]
-        trainfile.write("\n")
+        # trainfile.write("\n")
         timestart = datetime.datetime.now()
         newlogdir = 'a.jpg'
         poisres, poisresy = poiser.poison_data(curpoisx, curpoisy, timestart, False, newlogdir)
@@ -1119,6 +1101,7 @@ def main(args):
         print(" ")
         errgrd = poiser.computeError(clf)
         err = poiser.computeError(clfp)
+
 
     print("poi_train_x ", len(poi_train_x),\
             ", poi_train_y ", len(poi_train_y),\
