@@ -2,9 +2,8 @@ import numpy as np
 import datetime
 from sklearn import linear_model
 class poisoner(object):
-    def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, \
-                 trainfile, resfile,colmap):
+    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                 eta, beta, sigma, eps, train_file, result_file, column_map):
 
         """
         GDPoisoner handles gradient descent and poisoning routines
@@ -14,19 +13,19 @@ class poisoner(object):
         testx, testy: test set
         validx, validy: validation set used for evaluation and stopping
 
-        trainfile: file storing poisoning points in each iteration
-        resfile: file storing each iteration's results in csv format
+        train_file: file storing poisoning points in each iteration
+        result_file: file storing each iteration's results in csv format
         """
 
-        self.trnx = x
-        self.trny = y
-        self.tstx = testx
-        self.tsty = testy
-        self.vldx = validx
-        self.vldy = validy
+        self.train_x = train_x
+        self.train_y = train_y
+        self.test_x = test_x
+        self.test_y = test_y
+        self.valid_x = valid_x
+        self.valid_y = valid_y
 
-        self.samplenum = x.shape[0]
-        self.feanum = x.shape[1]
+        self.sample_amt = train_x.shape[0]
+        self.col_amt = train_x.shape[1]
 
         self.objective = 0
 
@@ -38,86 +37,70 @@ class poisoner(object):
         self.sigma = sigma
         self.eps = eps
 
-        self.trainfile = trainfile
-        self.resfile = resfile
+        self.train_file = train_file
+        self.result_file = result_file
         self.initclf, self.initlam = None, None
 
-        self.colmap = colmap
+        self.column_map = column_map
 
-    def poison_data(self, poisx, poisy, tstart, visualize, newlogdir):
+    def poison_data(self, x_pois, y_pois, tstart, visualize, newlogdir):
         """
         poison_data takes an initial set of poisoning points and optimizes it
         using gradient descent with parameters set in __init__
-
-        poisxinit, poisyinit: initial poisoning points
-        tstart: start time - used for writing out performance
-        visualize: whether we want to visualize the gradient descent steps
-        visualize: whether we want to visualize the gradient descent steps
-        newlogdir: directory to log into, to save the visualization
         """
 
-        poisct = poisx.shape[0]
-        print("Poison Count: {}".format(poisct))
+        poison_ct = x_pois.shape[0]
+        print("Poison Count: {}".format(poison_ct))
 
-        best_poisx = np.zeros(poisx.shape)
-        best_poisy = [None for a in poisy]
+        best_x_pois = np.zeros(x_pois.shape)
+        best_y_pois = [None for a in y_pois]
 
         best_obj = 0
-        last_obj = 0
+
         count = 0
 
         sig = self.compute_sigma()  # can already compute sigma and mu
         mu = self.compute_mu()  # as x_c does not change them
-        eq7lhs = np.bmat([[sig, np.transpose(mu)],
+        equation_7_left = np.bmat([[sig, np.transpose(mu)],
                           [mu, np.matrix([1])]])
 
         # figure out starting error
-        it_res = self.iter_progress(poisx, poisy, poisx, poisy)
+        it_res = self.iter_progress(x_pois, y_pois, x_pois, y_pois)
 
         print("Iteration {}:".format(count))
         print("Objective Value: {} Change: {}".format(it_res[0], it_res[0]))
         print("Validation MSE: {}".format(it_res[2][0]))
         print("Test MSE: {}".format(it_res[2][1]))
 
-        last_obj = it_res[0]
+
         if it_res[0] > best_obj:
-            best_poisx, best_poisy, best_obj = poisx, poisy, it_res[0]
+            best_x_pois, best_y_pois, best_obj = x_pois, y_pois, it_res[0]
 
-        # stuff to put into self.resfile
-        towrite = [poisct, count, it_res[0], it_res[1], \
-                   it_res[2][0], it_res[2][1], \
-                   (datetime.datetime.now() - tstart).total_seconds()]
+        self.train_file.write("\n")
+        self.train_file.write(str(poison_ct) + "," + str(count) + '\n')
 
-        self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
-        self.trainfile.write("\n")
-        self.trainfile.write(str(poisct) + "," + str(count) + '\n')
-
-        for j in range(poisct):
-            self.trainfile.write(','.join(
-                [str(val) for val
-                 in [poisy[j]] + poisx[j].tolist()[0] \
-                 ]) + '\n')
+        for j in range(poison_ct):
+            self.train_file.write(','.join([str(val) for val in [y_pois[j]] + x_pois[j].tolist()[0]]) + '\n')
 
         # main work loop
         while True:
             count += 1
-            new_poisx = np.matrix(np.zeros(poisx.shape))
-            new_poisy = [None for a in poisy]
-            x_cur = np.concatenate((self.trnx, poisx), axis=0)
-            y_cur = self.trny + poisy
+            new_x_pois = np.matrix(np.zeros(x_pois.shape))
+            new_y_pois = [None for a in y_pois]
+            x_cur = np.concatenate((self.train_x, x_pois), axis=0)
+            y_cur = self.train_y + y_pois
 
             clf, lam = self.learn_model(x_cur, y_cur, None)
-            pois_params = [(poisx[i], poisy[i], eq7lhs, mu, clf, lam) for i in range(poisct)]
+            pois_params = [(x_pois[i], y_pois[i], equation_7_left, mu, clf, lam) for i in range(poison_ct)]
             outofboundsct = 0
 
-            for i in range(poisct):
+            for i in range(poison_ct):
                 cur_pois_res = self.poison_data_subroutine(pois_params[i])
-
-                new_poisx[i] = cur_pois_res[0]
-                new_poisy[i] = cur_pois_res[1]
+                new_x_pois[i] = cur_pois_res[0]
+                new_y_pois[i] = cur_pois_res[1]
                 outofboundsct += cur_pois_res[2]
 
-            it_res = self.iter_progress(poisx, poisy, new_poisx, new_poisy)
+            it_res = self.iter_progress(x_pois, y_pois, new_x_pois, new_y_pois)
 
             print("Iteration {}:".format(count))
             print("Objective Value: {} Change: {}".format(
@@ -125,33 +108,30 @@ class poisoner(object):
 
             print("Validation MSE: {}".format(it_res[2][0]))
             print("Test MSE: {}".format(it_res[2][1]))
-            print("Y pushed out of bounds: {}/{}".format(
-                outofboundsct, poisct))
+            print("Y pushed out of bounds: {}/{}".format(outofboundsct, poison_ct))
 
             # if we don't make progress, decrease learning rate
             if (it_res[0] < it_res[1]):
                 print("no progress")
                 self.eta *= 0.75
-                new_poisx, new_poisy = poisx, poisy
+                new_x_pois, new_y_pois = x_pois, y_pois
             else:
-                poisx = new_poisx
-                poisy = new_poisy
+                x_pois = new_x_pois
+                y_pois = new_y_pois
 
             if (it_res[0] > best_obj):
-                best_poisx, best_poisy, best_obj = poisx, poisy, it_res[1]
+                best_x_pois, best_y_pois, best_obj = x_pois, y_pois, it_res[1]
 
-            last_obj = it_res[1]
-
-            towrite = [poisct, count, it_res[0], it_res[1] - it_res[0], \
+            towrite = [poison_ct, count, it_res[0], it_res[1] - it_res[0], \
                        it_res[2][0], it_res[2][1], \
                        (datetime.datetime.now() - tstart).total_seconds()]
 
-            self.resfile.write(','.join([str(val) for val in towrite]) + "\n")
-            self.trainfile.write("\n{},{}\n".format(poisct, count))
+            self.result_file.write(','.join([str(val) for val in towrite]) + "\n")
+            self.train_file.write("\n{},{}\n".format(poison_ct, count))
 
-            for j in range(poisct):
-                self.trainfile.write(','.join([str(val) for val in
-                                               [new_poisy[j]] + new_poisx[j].tolist()[0]
+            for j in range(poison_ct):
+                self.train_file.write(','.join([str(val) for val in
+                                               [new_y_pois[j]] + new_x_pois[j].tolist()[0]
                                                ]) + '\n')
             it_diff = abs(it_res[0] - it_res[1])
 
@@ -159,142 +139,90 @@ class poisoner(object):
             if (count >= 15 and (it_diff <= self.eps or count > 50)):
                 break
 
-        return best_poisx, best_poisy
-
-    def comp_grad_dummy(self, eq7lhs, mu, clf, lam, poisx, poisy):
-        """
-        comp_grad_dummy computes gradients for visualization
-        """
-        m = self.compute_m(clf, poisx, poisy)
-
-        wxc, bxc, wyc, byc = self.compute_wb_zc(eq7lhs, mu, clf.coef_, m, \
-                                                self.samplenum, poisx)
-
-        if (self.objective == 0):
-            r = self.compute_r(clf, lam)
-            otherargs = (r,)
-        else:
-            otherargs = None
-
-        attack, attacky = self.attack_comp(clf, wxc, bxc, wyc, byc, otherargs)
-
-        allattack = np.array(np.concatenate((attack, attacky), axis=1))
-        allattack = allattack.ravel()
-        norm = np.linalg.norm(allattack)
-        allattack = allattack / norm if norm > 0 else allattack
-        attack, attacky = allattack[:-1], allattack[-1]
-
-        return attack, attacky
+        return best_x_pois, best_y_pois
 
     def poison_data_subroutine(self, in_tuple):
         """
-        poison_data_subroutine poisons a single poisoning point
-        input is passed in as a tuple and immediately unpacked for
-        use with the multiprocessing.Pool.map function
+        Poisons a single data point and returns the new point and a flag indicating
+        whether the new point is out of bounds.
 
-        poisxelem, poisyelem: poisoning point at the start
-        eq7lhs, mu: values for computation
-        clf, lam: current model and regularization coef
+        Parameters:
+            in_tuple: tuple of (x_pois_ele, y_pois_ele, equation_7_left, mu, clf, lam)
+                - x_pois_ele: numpy array of shape (1, self.col_amt) representing
+                  the feature values of the point to be poisoned
+                - y_pois_ele: float representing the true label of the point to be
+                  poisoned
+                - equation_7_left: numpy array of shape (self.col_amt,) representing the left
+                  hand side of Equation 7 from the paper
+                - mu: float representing the value of the Lagrange multiplier mu
+                - clf: sklearn linear model representing the current model
+                - lam: float representing the regularization coefficient lambda
+
+        Returns:
+            Tuple of (numpy array of shape (1, self.col_amt), float, bool) representing
+            the new feature values, new label, and a flag indicating whether the new
+            point is out of bounds.
         """
-
-        poisxelem, poisyelem, eq7lhs, mu, clf, lam = in_tuple
-        m = self.compute_m(clf, poisxelem, poisyelem)
+        x_pois_ele, y_pois_ele, equation_7_left, mu, clf, lam = in_tuple
+        m = self.compute_m(clf, x_pois_ele, y_pois_ele)
 
         # compute partials
-        wxc, bxc, wyc, byc = self.compute_wb_zc(eq7lhs, mu, clf.coef_, m, \
-                                                self.samplenum, poisxelem)
+        wxc, bxc, wyc, byc = self.compute_wb_zc(equation_7_left, mu, clf.coef_, m, self.sample_amt, x_pois_ele)
 
-        if (self.objective == 0):
-            r = self.compute_r(clf, lam)
-            otherargs = (r,)
-        else:
-            otherargs = None
+        option_arg = (self.compute_r(clf, lam),) if self.objective == 0 else ()
 
-        attack, attacky = self.attack_comp(clf, wxc, bxc, wyc, byc, otherargs)
+        attack, attacky = self.attack_comp(clf, wxc, bxc, wyc, byc, *option_arg)
 
         # keep track of how many points are pushed out of bounds
-        if (poisyelem >= 1 and attacky >= 0) \
-                or (poisyelem <= 0 and attacky <= 0):
+        if (y_pois_ele >= 1 and attacky >= 0) or (y_pois_ele <= 0 and attacky <= 0):
             outofbounds = True
         else:
             outofbounds = False
 
-        # include y in gradient normalization
-        #if self.opty:
         allattack = np.array(np.concatenate((attack, attacky), axis=1))
         allattack = allattack.ravel()
-        #else:
-        #    allattack = attack.ravel()
-
         norm = np.linalg.norm(allattack)
         allattack = allattack / norm if norm > 0 else allattack
-        #if self.opty:
-        attack, attacky = allattack[:-1], allattack[-1]
-        #else:
-        #    attack = allattack
 
-        poisxelem, poisyelem, _ = self.lineSearch(poisxelem, poisyelem, \
-                                                  attack, attacky)
-        poisxelem = poisxelem.reshape((1, self.feanum))
+        x_pois_ele, y_pois_ele, _ = self.lineSearch(x_pois_ele, y_pois_ele, allattack[:-1], allattack[-1])
+        x_pois_ele = x_pois_ele.reshape((1, self.col_amt))
 
-        return poisxelem, poisyelem, outofbounds
+        return x_pois_ele, y_pois_ele, outofbounds
 
     def computeError(self, clf):
-        toterr, v_toterr = 0, 0
-        rsqnum, v_rsqnum = 0, 0
-        rsqdenom, v_rsqdenom = 0, 0
+        # Compute predicted values
+        test_y_pred = clf.predict(self.test_x)
+        valid_y_pred = clf.predict(self.valid_x)
+        # Compute squared errors
+        test_mse = np.mean((test_y_pred - self.test_y) ** 2)
+        valid_mse = np.mean((valid_y_pred - self.valid_y) ** 2)
 
-        w = np.reshape(clf.coef_, (self.feanum,))
-        sum_w = np.linalg.norm(w, 1)
-        mean = sum(self.tsty) / len(self.tsty)
-        vmean = sum(self.vldy) / len(self.vldy)
+        return valid_mse, test_mse
 
-        pred = clf.predict(self.tstx)
-        vpred = clf.predict(self.vldx)
-
-        for i, trueval in enumerate(self.vldy):
-            guess = vpred[i]
-            err = guess - trueval
-
-            v_toterr += err ** 2  # MSE
-            v_rsqnum += (guess - vmean) ** 2  # R^2 num and denom
-            v_rsqdenom += (trueval - vmean) ** 2
-
-        for i, trueval in enumerate(self.tsty):
-            guess = pred[i]
-            err = guess - trueval
-
-            toterr += err ** 2  # MSE
-            rsqnum += (guess - mean) ** 2  # R^2 num and denom
-            rsqdenom += (trueval - mean) ** 2
-
-        vld_mse = v_toterr / len(self.vldy)
-        tst_mse = toterr / len(self.tsty)
-
-        return vld_mse, tst_mse
-        # computed a bunch of other stuff too
-        # sum_w,rsqnum/rsqdenom,v_rsqnum/v_rsqdenom
-
-    def lineSearch(self, poisxelem, poisyelem, attack, attacky):
+    def lineSearch(self, x_pois_ele, y_pois_ele, attack, attacky):
         k = 0
-        x0 = np.copy(self.trnx)
-        y0 = self.trny[:]
+        x0 = np.copy(self.train_x)
+        y0 = self.train_y[:]
 
-        curx = np.append(x0, poisxelem, axis=0)
-        cury = y0[:]  # why not?
-        cury.append(poisyelem)
+        # Append the new point to the copy of the training data
+        current_x = np.append(x0, x_pois_ele, axis=0)
+        current_y = y0[:]
+        current_y.append(y_pois_ele)
 
-        clf, lam = self.learn_model(curx, cury, None)
+        # Train the model on the augmented data
+        clf, lam = self.learn_model(current_x, current_y, None)
         clf1, lam1 = clf, lam
 
-        lastpoisxelem = poisxelem
-        curpoisxelem = poisxelem
+        # Initialize variables for tracking progress
+        last_x_pois_ele = x_pois_ele
+        current_x_pois_ele = x_pois_ele
+        last_yc = y_pois_ele
+        current_yc = y_pois_ele
+        option_arg = None
 
-        lastyc = poisyelem
-        curyc = poisyelem
-        otherargs = None
-
-        w_1 = self.obj_comp(clf, lam, otherargs)
+        # Compute the objective function value before starting the line search
+        obj_value_before = self.obj_comp(clf, lam, option_arg)
+        # Perform line search until convergence or max iterations reached
         count = 0
         eta = self.eta
 
@@ -302,157 +230,118 @@ class poisoner(object):
             if (count > 0):
                 eta = self.beta * eta
             count += 1
-            curpoisxelem = curpoisxelem + eta * attack
-            curpoisxelem = np.clip(curpoisxelem, 0, 1)
-            curx[-1] = curpoisxelem
+            # Update the adversarial point and clip it to valid input range
+            current_x_pois_ele = current_x_pois_ele + eta * attack
+            current_x_pois_ele = np.clip(current_x_pois_ele, 0, 1)
+            current_x[-1] = current_x_pois_ele
+            # Update the adversarial label and clip it to valid label range
+            current_yc = current_yc + attacky * eta
+            current_yc = min(1, max(0, current_yc))
+            current_y[-1] = current_yc
+            # Train the model on the updated data and compute the objective function value
+            clf1, lam1 = self.learn_model(current_x, current_y, clf1)
+            obj_value_after = self.obj_comp(clf1, lam1, option_arg)
 
-            #if self.opty:
-            curyc = curyc + attacky * eta
-            curyc = min(1, max(0, curyc))
-            cury[-1] = curyc
-
-            clf1, lam1 = self.learn_model(curx, cury, clf1)
-            w_2 = self.obj_comp(clf1, lam1, otherargs)
-
-            if (count >= 100 or abs(w_1 - w_2) < 1e-8):  # convergence
+            # Check for convergence or bad progress
+            if (count >= 100 or abs(obj_value_before - obj_value_after) < 1e-8):
                 break
-            if (w_2 - w_1 < 0):  # bad progress
-                curpoisxelem = lastpoisxelem
-                curyc = lastyc
+            if (obj_value_after - obj_value_before < 0):  # bad progress
+                current_x_pois_ele = last_x_pois_ele
+                current_yc = last_yc
                 break
-
-            lastpoisxelem = curpoisxelem
-            lastyc = curyc
-            w_1 = w_2
+            # Update progress variables
+            last_x_pois_ele = current_x_pois_ele
+            last_yc = current_yc
+            obj_value_before = obj_value_after
             k += 1
 
-        for col in self.colmap:
-            vals = [(curpoisxelem[0, j], j) for j in self.colmap[col]]
-            topval, topcol = max(vals)
-            for j in self.colmap[col]:
-                if (j != topcol):
-                    curpoisxelem[0, j] = 0
-            if (topval > 1 / (1 + len(self.colmap[col]))):
-                curpoisxelem[0, topcol] = 1
-            else:
-                curpoisxelem[0, topcol] = 0
-        curx = np.delete(curx, curx.shape[0] - 1, axis=0)
-        curx = np.append(curx, curpoisxelem, axis=0)
-        cury[-1] = curyc
-        clf1, lam1 = self.learn_model(curx, cury, None)
+        # Find the most important features and set them to 1, the rest to 0
+        if self.column_map:
+            for col in self.column_map:
+                vals = [(current_x_pois_ele[0, j], j) for j in self.column_map[col]]
+                topval, topcol = max(vals)
+                for j in self.column_map[col]:
+                    if (j != topcol):
+                        current_x_pois_ele[0, j] = 0
+                if (topval > 1 / (1 + len(self.column_map[col]))):
+                    current_x_pois_ele[0, topcol] = 1
+                else:
+                    current_x_pois_ele[0, topcol] = 0
+        current_x = np.delete(current_x, current_x.shape[0] - 1, axis=0)
+        current_x = np.append(current_x, current_x_pois_ele, axis=0)
+        current_y[-1] = current_yc
+        clf1, lam1 = self.learn_model(current_x, current_y, None)
 
-        w_2 = self.obj_comp(clf1, lam1, otherargs)
+        obj_value_after = self.obj_comp(clf1, lam1, option_arg)
 
-        return np.clip(curpoisxelem, 0, 1), curyc, w_2
+        return np.clip(current_x_pois_ele, 0, 1), current_yc, obj_value_after
 
-    def iter_progress(self, lastpoisx, lastpoisy, curpoisx, curpoisy):
-        x0 = np.concatenate((self.trnx, lastpoisx), axis=0)
-        y0 = self.trny + lastpoisy
-        clf0, lam0 = self.learn_model(x0, y0, None)
-        w_0 = self.obj_comp(clf0, lam0, None)
+    def iter_progress(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
+        # Concatenate last x and y points with original data to create new training data
+        x_train = np.concatenate((self.train_x, last_x_pois), axis=0)
+        y_train = self.train_y + last_y_pois
 
-        x1 = np.concatenate((self.trnx, curpoisx), axis=0)
-        y1 = self.trny + curpoisy
-        clf1, lam1 = self.learn_model(x1, y1, None)
-        w_1 = self.obj_comp(clf1, lam1, None)
-        err = self.computeError(clf1)
+        # Train a new model on the concatenated data
+        clf_last, lam_last = self.learn_model(x_train, y_train, None)
 
-        return w_1, w_0, err
+        # Compute the objective function value for the new model
+        obj_last = self.obj_comp(clf_last, lam_last, None)
 
-    # can compute l2 objective and grads already
-    def comp_obj_new(self, clf, lam, otherargs):
-        coef_diff = np.linalg.norm(clf.coef_ - self.initclf.coef)
-        inter_diff = clf.intercept_ - self.initclf.intercept_
-        return coef_diff ** 2 + inter_diff ** 2
+        # Concatenate current x and y points with original data to create new training data
+        x_train = np.concatenate((self.train_x, current_x_pois), axis=0)
+        y_train = self.train_y + current_y_pois
 
-    def comp_attack_l2(self, clf, wxc, bxc, wyc, byc, otherargs):
-        initw, initb = self.initclf.coef_, self.initclf.intercept_
-        curw, curb = clf.coef_, clf.intercept_
+        # Train a new model on the concatenated data
+        clf_current, lam_current = self.learn_model(x_train, y_train, None)
 
-        attackx = np.dot(np.transpose(curw - initw), wxc) + (curb - initb) * bxc
-        attacky = np.dot(curw - initw, wyc.T) + (curb - initb) * byc
+        # Compute the objective function value for the new model
+        obj_current = self.obj_comp(clf_current, lam_current, None)
 
-        return attackx, attacky
+        # Compute the error of the current model
+        error = self.computeError(clf_current)
 
-        # unimplemented functions - handled by heirs
-        def learn_model(self, x, y, clf):
-            raise NotImplementedError
+        return obj_current, obj_last, error
 
-        def compute_sigma(self):
-            raise NotImplementedError
-
-        def compute_mu(self):
-            raise NotImplementedError
-
-        def compute_m(self, clf, w, b, poisxelem, poisyelem):
-            raise NotImplementedError
-
-        def compute_wb_zc(self, eq7lhs, mu, w, m, n):
-            raise NotImplementedError
-
-        def compute_r(self, clf, lam):
-            raise NotImplementedError
-
-        def comp_obj_trn(self, clf, lam, otherargs):
-            raise NotImplementedError
-
-        def comp_obj_vld(self, clf, lam, otherargs):
-            raise NotImplementedError
-
-        def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
-            raise NotImplementedError
-
-        def comp_attack_vld(self, clf, wxc, bxc, wyc, byc, otherargs):
-            raise NotImplementedError
 
 class linear_poisoner(poisoner):
-    def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, trainfile, resfile, colmap):
-        """
-        LinRegGDPoisoner implements computations for ordinary least
-        squares regression. Computations involving regularization are
-        handled in the respective children classes
+    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                 eta, beta, sigma, eps, train_file, result_file, column_map):
+        poisoner.__init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                          eta, beta, sigma, eps, train_file, result_file, column_map)
 
-        for input description, see GDPoisoner.__init__
-        """
-
-        poisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                            eta, beta, sigma, eps,  \
-                            trainfile, resfile, colmap)
-
-        self.x = x
-        self.y = y
-        self.initclf, self.initlam = self.learn_model(self.x, self.y, None)
+        self.train_x = train_x
+        self.train_y = train_y
+        self.initclf, self.initlam = self.learn_model(self.train_x, self.train_y, None)
 
     def learn_model(self, x, y, clf):
         if (not clf):
-            clf = linear_model.Ridge(alpha=0.00001)
+            clf = linear_model.LinearRegression()
         clf.fit(x, y)
         return clf, 0
 
     def compute_sigma(self):
-        sigma = np.dot(np.transpose(self.trnx), self.trnx)
-        sigma = sigma / self.trnx.shape[0]
+        sigma = np.dot(np.transpose(self.train_x), self.train_x)
+        sigma = sigma / self.train_x.shape[0]
         return sigma
 
     def compute_mu(self):
-        mu = np.mean(self.trnx, axis=0)
+        mu = np.mean(self.train_x, axis=0)
         return mu
 
-    def compute_m(self, clf, poisxelem, poisyelem):
+    def compute_m(self, clf, x_pois_ele, y_pois_ele):
         w, b = clf.coef_, clf.intercept_
-        poisxelemtransp = np.reshape(poisxelem, (self.feanum, 1))
-        wtransp = np.reshape(w, (1, self.feanum))
-        errterm = (np.dot(w, poisxelemtransp) + b - poisyelem).reshape((1, 1))
-        first = np.dot(poisxelemtransp, wtransp)
-        m = first + errterm[0, 0] * np.identity(self.feanum)
+        x_pois_eletransp = np.reshape(x_pois_ele, (self.col_amt, 1))
+        wtransp = np.reshape(w, (1, self.col_amt))
+        errterm = (np.dot(w, x_pois_eletransp) + b - y_pois_ele).reshape((1, 1))
+        first = np.dot(x_pois_eletransp, wtransp)
+        m = first + errterm[0, 0] * np.identity(self.col_amt)
         return m
 
-    def compute_wb_zc(self, eq7lhs, mu, w, m, n, poisxelem):
-        eq7rhs = -(1 / n) * np.bmat([[m, -np.matrix(poisxelem.T)],
+    def compute_wb_zc(self, equation_7_left, mu, w, m, n, x_pois_ele):
+        eq7rhs = -(1 / n) * np.bmat([[m, -np.matrix(x_pois_ele.T)],
                                      [np.matrix(w.T), np.matrix([-1])]])
 
-        wbxc = np.linalg.lstsq(eq7lhs, eq7rhs, rcond=None)[0]
+        wbxc = np.linalg.lstsq(equation_7_left, eq7rhs, rcond=None)[0]
         wxc = wbxc[:-1, :-1]  # get all but last row
         bxc = wbxc[-1, :-1]  # get last row
         wyc = wbxc[:-1, -1]
@@ -461,73 +350,73 @@ class linear_poisoner(poisoner):
         return wxc, bxc.ravel(), wyc.ravel(), byc
 
     def compute_r(self, clf, lam):
-        r = np.zeros((1, self.feanum))
+        r = np.zeros((1, self.col_amt))
         return r
 
-    def comp_obj_trn(self, clf, lam, otherargs):
-        errs = clf.predict(self.trnx) - self.trny
-        mse = np.linalg.norm(errs) ** 2 / self.samplenum
+    def comp_obj_trn(self, clf, lam, option_arg):
+        errs = clf.predict(self.train_x) - self.train_y
+        mse = np.linalg.norm(errs) ** 2 / self.sample_amt
 
         return mse
 
-    def comp_obj_vld(self, clf, lam, otherargs):
-        m = self.vldx.shape[0]
-        errs = clf.predict(self.vldx) - self.vldy
+    def comp_obj_vld(self, clf, lam, option_arg):
+        m = self.valid_x.shape[0]
+        errs = clf.predict(self.valid_x) - self.valid_y
         mse = np.linalg.norm(errs) ** 2 / m
         return mse
 
-    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
-        res = (clf.predict(self.trnx) - self.trny)
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, option_arg):
+        res = (clf.predict(self.train_x) - self.train_y)
 
-        gradx = np.dot(self.trnx, wxc) + bxc
-        grady = np.dot(self.trnx, wyc.T) + byc
+        gradx = np.dot(self.train_x, wxc) + bxc
+        grady = np.dot(self.train_x, wyc.T) + byc
 
-        attackx = np.dot(res, gradx) / self.samplenum
-        attacky = np.dot(res, grady) / self.samplenum
+        attackx = np.dot(res, gradx) / self.sample_amt
+        attacky = np.dot(res, grady) / self.sample_amt
 
         return attackx, attacky
 
-    def comp_attack_vld(self, clf, wxc, bxc, wyc, byc, otherargs):
-        n = self.vldx.shape[0]
-        res = (clf.predict(self.vldx) - self.vldy)
+    def comp_attack_vld(self, clf, wxc, bxc, wyc, byc, option_arg):
+        n = self.valid_x.shape[0]
+        res = (clf.predict(self.valid_x) - self.valid_y)
 
-        gradx = np.dot(self.vldx, wxc) + bxc
-        grady = np.dot(self.vldx, wyc.T) + byc
+        gradx = np.dot(self.valid_x, wxc) + bxc
+        grady = np.dot(self.valid_x, wyc.T) + byc
 
         attackx = np.dot(res, gradx) / n
         attacky = np.dot(res, grady) / n
 
         return attackx, attacky
 
-class lasso_oisoner(linear_poisoner):
-    def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, trainfile, resfile, colmap):
-        poisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                            eta, beta, sigma, eps, trainfile, resfile, colmap)
+class lasso_poisoner(linear_poisoner):
+    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                 eta, beta, sigma, eps, train_file, result_file, column_map):
+        poisoner.__init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                          eta, beta, sigma, eps, train_file, result_file, column_map)
 
         self.initlam = -1
-        self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, None, lam=None)
+        self.initclf, self.initlam = self.learn_model(self.train_x, self.train_y, None, lam=None)
 
-    def comp_obj_trn(self, clf, lam, otherargs):
-        curweight = linear_poisoner.comp_obj_trn(self, clf, lam, otherargs)
+    def comp_obj_trn(self, clf, lam, option_arg):
+        curweight = linear_poisoner.comp_obj_trn(self, clf, lam, option_arg)
 
         l1_norm = np.linalg.norm(clf.coef_, 1)
 
         return lam * l1_norm + curweight
 
-    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
-        r, = otherargs
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, option_arg):
+        r, = option_arg
         attackx, attacky = linear_poisoner.comp_attack_trn(self, clf, \
-                                                            wxc, bxc, wyc, byc, otherargs)
+                                                            wxc, bxc, wyc, byc, option_arg)
         attackx += self.initlam * np.dot(r, wxc)
         attacky += self.initlam * np.dot(r, wyc.T)
         return attackx, attacky
 
     def compute_r(self, clf, lam):
         r = linear_poisoner.compute_r(self, clf, lam)
-        errs = clf.predict(self.trnx) - self.trny
-        r = np.dot(errs, self.trnx)
-        r = -r / self.samplenum
+        errs = clf.predict(self.train_x) - self.train_y
+        r = np.dot(errs, self.train_x)
+        r = -r / self.sample_amt
         return r
 
     def learn_model(self, x, y, clf, lam=None):
@@ -545,25 +434,23 @@ class lasso_oisoner(linear_poisoner):
         return clf, lam
 
 class ridge_poisoner(linear_poisoner):
-    print("RIGHT")
 
-    def __init__(self, x, y, testx, testy, validx, validy, \
-                 eta, beta, sigma, eps, trainfile, resfile, colmap):
-        poisoner.__init__(self, x, y, testx, testy, validx, validy, \
-                          eta, beta, sigma, eps, trainfile, resfile, colmap)
+    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                 eta, beta, sigma, eps, train_file, result_file, column_map):
+        poisoner.__init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, \
+                     eta, beta, sigma, eps, train_file, result_file, column_map)
         self.initlam = -1
-        self.initclf, self.initlam = self.learn_model(self.trnx, self.trny, \
-                                                      None, lam=None)
+        self.initclf, self.initlam = self.learn_model(self.train_x, self.train_y, None, lam=None)
 
-    def comp_obj_trn(self, clf, lam, otherargs):
-        curweight = linear_poisoner.comp_obj_trn(self, clf, lam, otherargs)
+    def comp_obj_trn(self, clf, lam, option_arg):
+        curweight = linear_poisoner.comp_obj_trn(self, clf, lam, option_arg)
         l2_norm = np.linalg.norm(clf.coef_) / 2
         return lam * l2_norm + curweight
 
-    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, otherargs):
-        r, = otherargs
+    def comp_attack_trn(self, clf, wxc, bxc, wyc, byc, option_arg):
+        r, = option_arg
         attackx, attacky = linear_poisoner.comp_attack_trn(self, clf, \
-                                                            wxc, bxc, wyc, byc, otherargs)
+                                                            wxc, bxc, wyc, byc, option_arg)
 
         attackx += np.dot(r, wxc)
         attacky += np.dot(r, wyc.T)
@@ -571,12 +458,12 @@ class ridge_poisoner(linear_poisoner):
 
     def compute_r(self, clf, lam):
         r = linear_poisoner.compute_r(self, clf, lam)
-        r += lam * np.matrix(clf.coef_).reshape(1, self.feanum)
+        r += lam * np.matrix(clf.coef_).reshape(1, self.col_amt)
         return r
 
     def compute_sigma(self):
         basesigma = linear_poisoner.compute_sigma(self)
-        sigma = basesigma + self.initlam * np.eye(self.feanum)
+        sigma = basesigma + self.initlam * np.eye(self.col_amt)
         return sigma
 
     def learn_model(self, x, y, clf, lam=None):
