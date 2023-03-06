@@ -81,7 +81,7 @@ class poisoner(object):
 
                 weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col = self.compute_weight_bias(
                     equation_7_left, classifier.coef_, m, self.sample_amt, x_pois_ele)
-                option_arg = (self.compute_vector_r(classifier, lam),) if self.objective == 0 else ()
+                option_arg = (self.compute_vector_r(classifier, lam),) #if self.objective == 0 else ()
                 attack, attack_y = self.attack_comp(classifier, weight_expt_last_row, bias_last_row,\
                                                     weight_expt_last_col,\
                                                     bias_last_col, *option_arg)
