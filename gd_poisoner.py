@@ -188,15 +188,24 @@ class poisoner(object):
 
         return np.clip(current_x_pois_ele, 0, 1), current_yc, obj_value_after
 
-    def compute_error(self, classifier):
+    def compute_error(self, classifier, plot):
         # Compute predicted values
         test_y_pred = classifier.predict(self.test_x)
         valid_y_pred = classifier.predict(self.valid_x)
+        if (plot is True):
+            plt.scatter(self.test_y, test_y_pred)
+            plt.xlabel("Testing Data")
+            plt.ylabel("Testing Predicted")
+            plt.show()
+            plt.scatter(self.valid_y, valid_y_pred)
+            plt.xlabel("Validation Data")
+            plt.ylabel("Validation Predicted")
+            plt.show()
         # Compute squared errors
         test_mse = np.mean((test_y_pred - self.test_y) ** 2)
         valid_mse = np.mean((valid_y_pred - self.valid_y) ** 2)
-
         return valid_mse, test_mse
+    
     def iteration_progress(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
         # Concatenate last x and y points with original data to create new training data
         x_train = np.concatenate((self.train_x, last_x_pois), axis=0)
