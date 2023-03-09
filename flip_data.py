@@ -4,7 +4,7 @@ import bisect
 
 class flip_data():
 
-    def perform_flip(poi_train_x, poi_train_y, poison_ct):
+    def inverse_flip(poi_train_x, poi_train_y, poison_ct):
         #self.poi_train_x = poi_train_x
         #self.poi_train_y = poi_train_y
         #self.poison_ct = poison_ct
@@ -61,3 +61,9 @@ class flip_data():
         print("y_pois len: ", len(y_pois))
 
         return x_pois, y_pois
+    
+     def B_flip(poi_train_x, poi_train_y, poison_ct):
+        poison_inds = np.random.choice(poi_train_x.shape[0], poison_ct, replace=False)
+        x_poison = np.matrix(poi_train_x[poison_inds])
+        y_poison = [1 if 1 - poi_train_y[i] > 0.5 else 0 for i in poison_inds]
+        return x_poison, y_poison
