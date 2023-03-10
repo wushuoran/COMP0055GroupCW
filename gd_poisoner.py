@@ -25,7 +25,7 @@ class poisoner(object):
         self.eps = eps
         self.init_classifier, self.init_lam = None, None
 
-    def poison_data(self, x_pois, y_pois, stop_1, stop_2):
+    def poison_data(self, x_pois, y_pois, stop_1, stop_2, stop3, decrease_rate):
 
         poison_ct = x_pois.shape[0]
         print("*****************************")
@@ -35,21 +35,20 @@ class poisoner(object):
         best_y_pois = [None]
         best_obj = 0
         count = 0
+        no_progress_count = 0
 
         sig = self.compute_sigma()
         multiplier = self.compute_multiplier()
         equation_7_left = np.bmat([[sig, np.transpose(multiplier)], [multiplier, np.matrix([1])]])
         # figure out starting error
-        it_res = self.iteration_progress(x_pois, y_pois, x_pois, y_pois)
-
-        print("Iteration ", count, "\nObjective Value: ", it_res[0], " Change: ", it_res[0])
-        print("Validation MSE ", it_res[2][0], "\nTest MSE ", it_res[2][1])
-        print(" ")
-
+        it_res = self.iteration_train(x_pois, y_pois, x_pois, y_pois)
         if it_res[0] > best_obj:
             best_x_pois = x_pois
             best_y_pois = y_pois
             best_obj = it_res[0]
+        print("Iteration ", count, "\nObjective Value: ", it_res[0], " Change: ", it_res[0])
+        print("Validation MSE ", it_res[2][0], "\nTest MSE ", it_res[2][1])
+        print(" ")
 
         while True:
             count += 1
@@ -60,6 +59,7 @@ class poisoner(object):
 
             classifier, lam = self.learn_model(x_cur, y_cur, None)
 
+            # deal with each poisoned data element
             for i in range(poison_ct):
                 # Poisons a single data point and generate the new point and  flag indicating
                 x_pois_ele = x_pois[i]
@@ -77,19 +77,22 @@ class poisoner(object):
                 norm = np.linalg.norm(all_attacks)
                 all_attacks = all_attacks / norm if norm > 0 else all_attacks
 
-                x_pois_ele, y_pois_ele, _ = self.search_line(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
+                x_pois_ele, y_pois_ele = self.search_line(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
                 x_pois_ele = x_pois_ele.reshape((1, self.col_amt))
                 new_x_pois[i] = x_pois_ele
                 new_y_pois[i] = y_pois_ele
 
-            it_res = self.iteration_progress(x_pois, y_pois, new_x_pois, new_y_pois)
+            # train the new model on the new poisoned data
+            it_res = self.iteration_train(x_pois, y_pois, new_x_pois, new_y_pois)
             print("Iteration ", count)
             print("Objective Value:", it_res[0], " Difference: ", (it_res[0] - it_res[1]))
 
-            if (it_res[0] < it_res[1]):
+            if (it_res[0] <= it_res[1]):
                 print("NO PROGRESS MADE!")
-                self.eta *= 0.65  # reduce the learning rate
+                no_progress_count += 1
+                self.eta *= decrease_rate # reduce the learning rate
             else:
+                no_progress_count = 0
                 x_pois = new_x_pois
                 y_pois = new_y_pois
             print(" ")
@@ -101,9 +104,11 @@ class poisoner(object):
 
             # stopping conditions
             it_diff = abs(it_res[0] - it_res[1])
-            if count >= stop_1:
+            if count >= stop_1: # at least run 'stop1' iterations
                 if (it_diff <= self.eps or count >= stop_2):
-                    break
+                    break   # if goal is reached or reach the maximum iteration limit 'stop2'
+            if no_progress_count >= stop3: # stop if no progress is made after 'stop3' iterations
+                break
 
         return best_x_pois, best_y_pois
 
@@ -162,16 +167,8 @@ class poisoner(object):
             obj_value_before = obj_value_after
             k += 1
             count += 1
-        # Find the most important features and set them to 1, the rest to 0
 
-        current_x = np.delete(current_x, current_x.shape[0] - 1, axis=0)
-        current_x = np.append(current_x, current_x_pois_ele, axis=0)
-        current_y[-1] = current_yc
-        classifier_copy, lam1 = self.learn_model(current_x, current_y, None)
-
-        obj_value_after = self.compute_obj_train(classifier_copy, lam1, option_arg)
-
-        return np.clip(current_x_pois_ele, 0, 1), current_yc, obj_value_after
+        return np.clip(current_x_pois_ele, 0, 1), current_yc
 
     def compute_error(self, classifier, plot, poisoned):
         # Compute predicted values
@@ -195,7 +192,7 @@ class poisoner(object):
         valid_mse = np.mean((valid_y_pred - self.valid_y) ** 2)
         return valid_mse, test_mse
 
-    def iteration_progress(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
+    def iteration_train(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
         # Concatenate last x and y points with original data to create new training data
         x_train = np.concatenate((self.train_x, last_x_pois), axis=0)
         y_train = self.train_y + last_y_pois
@@ -319,45 +316,36 @@ class lasso_poisoner(linear_poisoner):
     def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
         # Call parent class constructor
         super().__init__(train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps)
-        self.init_lam = None
-        self.init_classifier = None
+        self.init_lam = -1
+        self.init_classifier, self.init_lam = self.learn_model(self.train_x, self.train_y, None, None)
 
     def learn_model(self, x, y, classifier, lam=None):
-        if lam is None and self.init_lam is not None:
+        if (lam is None and self.init_lam != -1):
             lam = self.init_lam
-        if classifier is None:
-            if lam is None:
+        if (classifier is None):
+            if (lam is None):
                 classifier = linear_model.LassoCV(max_iter=10000)
                 classifier.fit(x, y)
                 lam = classifier.alpha_
             classifier = linear_model.Lasso(alpha=lam, max_iter=10000, warm_start=True)
         classifier.fit(x, y)
-        if self.init_classifier is None:
-            self.init_classifier = classifier
-            self.init_lam = lam
         return classifier, lam
 
     def compute_vector_r(self, classifier, lam):
         r = super().compute_vector_r(classifier, lam)
-        if self.init_classifier is not None:
-            r += lam * np.matrix(self.init_classifier.coef_).reshape(1, self.col_amt)
+        r += lam * np.matrix(self.init_classifier.coef_).reshape(1, self.col_amt)
         return r
 
-    def compute_attack_train(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col,
-                        option_arg):
-        r, = option_arg
-        attack_x, attack_y = super().compute_attack_train(classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col,
-                                                     bias_last_col, option_arg)
-        if self.init_classifier is not None:
-            attack_x += self.init_lam * np.dot(r, weight_expt_last_row)
-            attack_y += self.init_lam * np.dot(r, weight_expt_last_col.T)
+    def compute_attack_train(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col, option_arg):
+        attack_x, attack_y = super().compute_attack_train(classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col,bias_last_col, option_arg)
+        attack_x += self.init_lam * np.dot(option_arg, weight_expt_last_row)
+        attack_y += self.init_lam * np.dot(option_arg, weight_expt_last_col.T)
         return attack_x, attack_y
 
     def compute_obj_train(self, classifier, lam, option_arg):
         curweight = super().compute_obj_train(classifier, lam, option_arg)
         l1_norm = np.linalg.norm(classifier.coef_, 1)
-        if self.init_classifier is not None:
-            l1_norm += np.linalg.norm(self.init_classifier.coef_, 1)
+        #l1_norm += np.linalg.norm(self.init_classifier.coef_, 1)
         return lam * l1_norm + curweight
 
 
@@ -449,9 +437,14 @@ class e_net_poisoner(linear_poisoner):
         return  self.init_lam * np.eye(self.col_amt) * 0.5 #+ super().compute_sigma()
 
     def learn_model(self, x, y, classifier, lam=None):
-        if (lam is None):
+        if (lam is None and self.init_lam != -1):
             lam = self.init_lam
         if (classifier is None):
-            classifier = linear_model.ElasticNetCV(max_iter=10000)
+            if (lam is not None):
+                classifier = linear_model.ElasticNetCV(max_iter=10000)
+                classifier.fit(x, y)
+                lam = classifier.alpha_
+            classifier = linear_model.ElasticNet(alpha=lam, max_iter=10000, warm_start=True)
+            # classifier = linear_model.ElasticNetCV(max_iter=10000)
         classifier.fit(x, y)
         return classifier, lam
