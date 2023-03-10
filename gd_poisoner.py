@@ -27,6 +27,11 @@ class poisoner(object):
 
     def poison_data(self, x_pois, y_pois, stop_1, stop_2, stop3, decrease_rate):
 
+        '''
+        Algorithm 1 in the paper
+        Poisoning Attack Algorithm
+        '''
+
         poison_ct = x_pois.shape[0]
         print("*****************************")
         print("**** Poison Count: ", poison_ct, " ****")
@@ -50,6 +55,7 @@ class poisoner(object):
         print("Validation MSE ", it_res[2][0], "\nTest MSE ", it_res[2][1])
         print(" ")
 
+        ''' Repeat (Line 3 in Algorithm 1)'''
         while True:
             count += 1
             new_x_pois = np.matrix(np.zeros(x_pois.shape))
@@ -59,8 +65,8 @@ class poisoner(object):
 
             classifier, lam = self.learn_model(x_cur, y_cur, None)
 
-            # deal with each poisoned data element
-            for i in range(poison_ct):
+            ''' for c = 1, ... , p do (Line 6 in Algorithm 1)'''
+            for i in range(poison_ct): # deal with each poisoned data element
                 # Poisons a single data point and generate the new point and  flag indicating
                 x_pois_ele = x_pois[i]
                 y_pois_ele = y_pois[i]
@@ -76,7 +82,7 @@ class poisoner(object):
                 all_attacks = all_attacks.ravel()
                 norm = np.linalg.norm(all_attacks)
                 all_attacks = all_attacks / norm if norm > 0 else all_attacks
-
+                ''' line search (Line 7 in Algorithm 1)'''
                 x_pois_ele, y_pois_ele = self.search_line(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
                 x_pois_ele = x_pois_ele.reshape((1, self.col_amt))
                 new_x_pois[i] = x_pois_ele
@@ -102,14 +108,14 @@ class poisoner(object):
                 best_y_pois = y_pois
                 best_obj = it_res[1]
 
-            # stopping conditions
+            ''' stopping conditions, until (Line 11 in Algorithm 1)'''
             it_diff = abs(it_res[0] - it_res[1])
             if count >= stop_1: # at least run 'stop1' iterations
                 if (it_diff <= self.eps or count >= stop_2):
                     break   # if goal is reached or reach the maximum iteration limit 'stop2'
             if no_progress_count >= stop3: # stop if no progress is made after 'stop3' iterations
                 break
-
+        ''' OUTPUT final poisoning attack samples'''
         return best_x_pois, best_y_pois
 
     def search_line(self, x_pois_ele, y_pois_ele, attack, attack_y):
@@ -440,7 +446,7 @@ class e_net_poisoner(linear_poisoner):
         if (lam is None and self.init_lam != -1):
             lam = self.init_lam
         if (classifier is None):
-            if (lam is not None):
+            if (lam is None):
                 classifier = linear_model.ElasticNetCV(max_iter=10000)
                 classifier.fit(x, y)
                 lam = classifier.alpha_
