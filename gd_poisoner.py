@@ -249,9 +249,8 @@ class linear_poisoner(poisoner):
         return np.dot(x_pois_ele_transpose, w_transpose) + np.identity(self.col_amt) * error[0, 0]
 
     def compute_weight_bias(self, w, m, n, x_pois_ele):
-        sig = self.compute_sigma()
         multiplier = np.mean(self.train_x, axis=0)
-        equation_7_left = np.bmat([[sig, np.transpose(multiplier)], [multiplier, np.matrix([1])]])
+        equation_7_left = np.bmat([[self.compute_sigma(), np.transpose(multiplier)], [multiplier, np.matrix([1])]])
         equation_7_right = -(1 / n) * np.bmat([[m, -np.matrix(x_pois_ele.T)], [np.matrix(w.T), np.matrix([-1])]])
 
         weight_bias_matrix = np.linalg.lstsq(equation_7_left, equation_7_right, rcond=None)[0]
