@@ -29,28 +29,26 @@ class poisoner(object):
 
         '''
         Algorithm 1 in the paper
-        Poisoning Attack Algorithm
+        Optimization-Based Poisoning Attack Algorithm (OptP)
         '''
 
         poison_ct = x_pois.shape[0]
-        print("*****************************")
-        print("**** Poison Count: ", poison_ct, " ****")
-        print("*****************************")
         best_x_pois = np.zeros(x_pois.shape)
         best_y_pois = [None]
         best_obj = 0
         count = 0
         no_progress_count = 0
 
-        sig = self.compute_sigma()
-        multiplier = self.compute_multiplier()
-        equation_7_left = np.bmat([[sig, np.transpose(multiplier)], [multiplier, np.matrix([1])]])
         # figure out starting error
         it_res = self.iteration_train(x_pois, y_pois, x_pois, y_pois)
         if it_res[0] > best_obj:
             best_x_pois = x_pois
             best_y_pois = y_pois
             best_obj = it_res[0]
+
+        print("\n\n*****************************")
+        print("**** Poison Count: ", poison_ct, " ****")
+        print("*****************************")
         print("Iteration ", count, "\nObjective Value: ", it_res[0], " Change: ", it_res[0])
         print("Validation MSE ", it_res[2][0], "\nTest MSE ", it_res[2][1])
         print(" ")
@@ -60,10 +58,9 @@ class poisoner(object):
             count += 1
             new_x_pois = np.matrix(np.zeros(x_pois.shape))
             new_y_pois = [None for a in y_pois]
-            x_cur = np.concatenate((self.train_x, x_pois), axis=0)
-            y_cur = self.train_y + y_pois
 
-            classifier, lam = self.learn_model(x_cur, y_cur, None)
+            classifier, lam = self.learn_model\
+                (np.concatenate((self.train_x, x_pois), axis=0), self.train_y + y_pois, None)
 
             ''' for c = 1, ... , p do (Line 6 in Algorithm 1)'''
             for i in range(poison_ct): # deal with each poisoned data element
@@ -73,7 +70,7 @@ class poisoner(object):
                 m = self.compute_matrix(classifier, x_pois_ele, y_pois_ele)
 
                 weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col \
-                    = self.compute_weight_bias(equation_7_left, classifier.coef_, m, self.sample_amt, x_pois_ele)
+                    = self.compute_weight_bias(classifier.coef_, m, self.sample_amt, x_pois_ele)
                 option_arg = (self.compute_vector_r(classifier, lam),)
                 attack, attack_y = self.compute_attack_train \
                     (classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col, *option_arg)
@@ -200,22 +197,16 @@ class poisoner(object):
 
     def iteration_train(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
         # Concatenate last x and y points with original data to create new training data
-        x_train = np.concatenate((self.train_x, last_x_pois), axis=0)
-        y_train = self.train_y + last_y_pois
-
         # Train a new model on the concatenated data
-        classifier_last, lam_last = self.learn_model(x_train, y_train, None)
-
+        classifier_last, lam_last = self.learn_model\
+            (np.concatenate((self.train_x, last_x_pois), axis=0), self.train_y + last_y_pois, None)
         # Compute the objective function value for the new model
         obj_last = self.compute_obj_train(classifier_last, lam_last, None)
 
         # Concatenate current x and y points with original data to create new training data
-        x_train = np.concatenate((self.train_x, current_x_pois), axis=0)
-        y_train = self.train_y + current_y_pois
-
         # Train a new model on the concatenated data
-        classifier_current, lam_current = self.learn_model(x_train, y_train, None)
-
+        classifier_current, lam_current = self.learn_model\
+            (np.concatenate((self.train_x, current_x_pois), axis=0), self.train_y + current_y_pois, None)
         # Compute the objective function value for the new model
         obj_current = self.compute_obj_train(classifier_current, lam_current, None)
 
@@ -229,7 +220,9 @@ class poisoner(object):
         error = tuple([valid_mse, test_mse])
         return obj_current, obj_last, error
 
-
+"""
+Linear Regression Poisoner
+"""
 class linear_poisoner(poisoner):
     def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
         # Call parent class constructor
@@ -247,18 +240,18 @@ class linear_poisoner(poisoner):
     def compute_sigma(self):
         return np.dot(np.transpose(self.train_x), self.train_x) / self.train_x.shape[0]
 
-    def compute_multiplier(self):
-        return np.mean(self.train_x, axis=0)
-
     def compute_matrix(self, classifier, x_pois_ele, y_pois_ele):
         weight = classifier.coef_
         bias = classifier.intercept_
         x_pois_ele_transpose = np.reshape(x_pois_ele, (self.col_amt, 1))
         w_transpose = np.reshape(weight, (1, self.col_amt))
-        err_ter_m = (np.dot(weight, x_pois_ele_transpose) + bias - y_pois_ele).reshape((1, 1))
-        return np.dot(x_pois_ele_transpose, w_transpose) + err_ter_m[0, 0] * np.identity(self.col_amt)
+        error = (np.dot(weight, x_pois_ele_transpose) + bias - y_pois_ele).reshape((1, 1))
+        return np.dot(x_pois_ele_transpose, w_transpose) + np.identity(self.col_amt) * error[0, 0]
 
-    def compute_weight_bias(self, equation_7_left, w, m, n, x_pois_ele):
+    def compute_weight_bias(self, w, m, n, x_pois_ele):
+        sig = self.compute_sigma()
+        multiplier = np.mean(self.train_x, axis=0)
+        equation_7_left = np.bmat([[sig, np.transpose(multiplier)], [multiplier, np.matrix([1])]])
         equation_7_right = -(1 / n) * np.bmat([[m, -np.matrix(x_pois_ele.T)], [np.matrix(w.T), np.matrix([-1])]])
 
         weight_bias_matrix = np.linalg.lstsq(equation_7_left, equation_7_right, rcond=None)[0]
@@ -274,10 +267,12 @@ class linear_poisoner(poisoner):
         return np.zeros((1, self.col_amt))
 
     def compute_obj_train(self, classifier, lam, option_arg):
+        """ a regularized loss function computed on the training data (excluding the poisoning points) """
         errs = classifier.predict(self.train_x) - self.train_y
         return (np.linalg.norm(errs) ** 2) / self.sample_amt
 
     def compute_obj_valid(self, classifier, lam, option_arg):
+        """ a loss function computed on an untainted validation set """
         errs = classifier.predict(self.valid_x) - self.valid_y
         return (np.linalg.norm(errs) ** 2) / self.valid_x.shape[0]
 
@@ -298,8 +293,7 @@ class linear_poisoner(poisoner):
 
         return attack_x, attack_y
 
-    def compute_attack_valid(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col,
-                        option_arg):
+    def compute_attack_valid(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col, option_arg):
         n = self.valid_x.shape[0]
         res = (classifier.predict(self.valid_x) - self.valid_y)
 
@@ -317,7 +311,63 @@ class linear_poisoner(poisoner):
 
         return attack_x, attack_y
 
+"""
+Ridge Poisoner
+"""
+class ridge_poisoner(linear_poisoner):
 
+    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
+        # Call parent class constructor
+        super().__init__(train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps)
+        # Initialize initial lambda and classifier
+        self.init_lam = -1
+        self.init_classifier, self.init_lam = self.learn_model(self.train_x, self.train_y, None, lam=None)
+
+    def compute_obj_train(self, classifier, lam, option_arg):
+        """ a regularized loss function computed on the training data (excluding the poisoning points) """
+        # Compute L2 norm of coefficients
+        l2 = np.linalg.norm(classifier.coef_) / 2
+        # Call parent class method to compute objective function value
+        current_weight = super().compute_obj_train(classifier, lam, option_arg)
+        # Add L2 regularization term to the objective function
+        return lam * l2 + current_weight
+
+    def compute_attack_train(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col, option_arg):
+        r, = option_arg
+        # Call parent class method to compute the poisoned data
+        attack_x, attack_y = super().compute_attack_train(classifier, weight_expt_last_row, bias_last_row,
+                                                     weight_expt_last_col, bias_last_col, option_arg)
+        # Add regularization term to the attacked data
+        attack_x += np.dot(r, weight_expt_last_row)
+        attack_y += np.dot(r, weight_expt_last_col.T)
+        return attack_x, attack_y
+
+    def compute_vector_r(self, classifier, lam):
+        # Call parent class method to compute r value
+        r = super().compute_vector_r(classifier, lam)
+        # Add L2 regularization term to r
+        r += lam * np.matrix(classifier.coef_).reshape(1, self.col_amt)
+        return r
+
+    def compute_sigma(self):
+        # Add initial lambda to sigma
+        return super().compute_sigma() + self.init_lam * np.eye(self.col_amt)
+
+    def learn_model(self, x, y, classifier, lam=None):
+        # Set lambda to 0.1 if not provided
+        if lam is None:
+            lam = 0.1
+        # Initialize Ridge regression model
+        classifier = linear_model.Ridge(alpha=lam, max_iter=10000)
+        # Fit the model with given input data
+        classifier.fit(x, y)
+        # Return the trained model and lambda
+        return classifier, lam
+
+
+"""
+Lasso Regression Poisoner
+"""
 class lasso_poisoner(linear_poisoner):
     def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
         # Call parent class constructor
@@ -349,67 +399,16 @@ class lasso_poisoner(linear_poisoner):
         return attack_x, attack_y
 
     def compute_obj_train(self, classifier, lam, option_arg):
+        """ a regularized loss function computed on the training data (excluding the poisoning points) """
         curweight = super().compute_obj_train(classifier, lam, option_arg)
-        l1_norm = np.linalg.norm(classifier.coef_, 1)
-        #l1_norm += np.linalg.norm(self.init_classifier.coef_, 1)
-        return lam * l1_norm + curweight
+        l1 = np.linalg.norm(classifier.coef_, 1)
+        #l1 += np.linalg.norm(self.init_classifier.coef_, 1)
+        return lam * l1 + curweight
 
 
-class ridge_poisoner(linear_poisoner):
-
-    def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
-        # Call parent class constructor
-        super().__init__(train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps)
-        # Initialize initial lambda and classifier
-        self.init_lam = -1
-        self.init_classifier, self.init_lam = self.learn_model(self.train_x, self.train_y, None, lam=None)
-
-    def compute_obj_train(self, classifier, lam, option_arg):
-        # Compute L2 norm of coefficients
-        l2_norm = np.linalg.norm(classifier.coef_) / 2
-        # Call parent class method to compute objective function value
-        curweight = super().compute_obj_train(classifier, lam, option_arg)
-        # Add L2 regularization term to the objective function
-        return lam * l2_norm + curweight
-
-    def compute_attack_train(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col,
-                        option_arg):
-        r, = option_arg
-        # Call parent class method to compute the poisoned data
-        attack_x, attack_y = super().compute_attack_train(classifier, weight_expt_last_row, bias_last_row,
-                                                     weight_expt_last_col, bias_last_col, option_arg)
-        # Add regularization term to the attacked data
-        attack_x += np.dot(r, weight_expt_last_row)
-        attack_y += np.dot(r, weight_expt_last_col.T)
-        return attack_x, attack_y
-
-    def compute_vector_r(self, classifier, lam):
-        # Call parent class method to compute r value
-        r = super().compute_vector_r(classifier, lam)
-        # Add L2 regularization term to r
-        r += lam * np.matrix(classifier.coef_).reshape(1, self.col_amt)
-        return r
-
-    def compute_sigma(self):
-        # Call parent class method to compute sigma
-        basesigma = super().compute_sigma()
-        # Add initial lambda to sigma
-        sigma = basesigma + self.init_lam * np.eye(self.col_amt)
-        return sigma
-
-    def learn_model(self, x, y, classifier, lam=None):
-        # Set lambda to 0.1 if not provided
-        if lam is None:
-            lam = 0.1
-        # Initialize Ridge regression model
-        classifier = linear_model.Ridge(alpha=lam, max_iter=10000)
-        # Fit the model with given input data
-        classifier.fit(x, y)
-        # Return the trained model and lambda
-        return classifier, lam
-
-
-
+"""
+Elastic Network Poisoner
+"""
 class e_net_poisoner(linear_poisoner):
 
     def __init__(self, train_x, train_y, test_x, test_y, valid_x, valid_y, eta, beta, sigma, eps):
@@ -420,9 +419,10 @@ class e_net_poisoner(linear_poisoner):
         self.init_classifier, self.init_lam = self.learn_model(self.train_x, self.train_y, None, None)
 
     def compute_obj_train(self, classifier, lam, option_arg):
-        l1_norm = np.linalg.norm(classifier.coef_, 1)
-        l2_norm = np.linalg.norm(classifier.coef_, 2) / 2
-        return (lam * (l1_norm + l2_norm)) / 2 + super().compute_obj_train(classifier, lam, option_arg)
+        """ a regularized loss function computed on the training data (excluding the poisoning points) """
+        l1 = np.linalg.norm(classifier.coef_, 1)
+        l2 = np.linalg.norm(classifier.coef_, 2) / 2
+        return (lam * (l1 + l2)) / 2 + super().compute_obj_train(classifier, lam, option_arg)
 
     def compute_attack_train(self, classifier, weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col,
                              option_arg):
@@ -439,7 +439,6 @@ class e_net_poisoner(linear_poisoner):
         return lam * (l1 + l2) * 0.5 + super().compute_vector_r(classifier, lam)
 
     def compute_sigma(self):
-        # Add initial lambda to sigma
         return  self.init_lam * np.eye(self.col_amt) * 0.5 #+ super().compute_sigma()
 
     def learn_model(self, x, y, classifier, lam=None):
