@@ -55,7 +55,6 @@ class poisoner(object):
 
         ''' Repeat (Line 3 in Algorithm 1)'''
         while True:
-            count += 1
             new_x_pois = np.matrix(np.zeros(x_pois.shape))
             new_y_pois = [None for a in y_pois]
 
@@ -87,7 +86,7 @@ class poisoner(object):
 
             # train the new model on the new poisoned data
             it_res = self.iteration_train(x_pois, y_pois, new_x_pois, new_y_pois)
-            print("Iteration ", count)
+            print("Iteration ", count+1)
             print("Objective Value:", it_res[0], " Difference: ", (it_res[0] - it_res[1]))
 
             if (it_res[0] <= it_res[1]):
@@ -105,6 +104,9 @@ class poisoner(object):
                 best_y_pois = y_pois
                 best_obj = it_res[1]
 
+            ''' count increment (Line 10 in Algorithm 1)'''
+            count += 1
+
             ''' stopping conditions, until (Line 11 in Algorithm 1)'''
             it_diff = abs(it_res[0] - it_res[1])
             if count >= stop_1: # at least run 'stop1' iterations
@@ -112,6 +114,7 @@ class poisoner(object):
                     break   # if goal is reached or reach the maximum iteration limit 'stop2'
             if no_progress_count >= stop3: # stop if no progress is made after 'stop3' iterations
                 break
+
         ''' OUTPUT final poisoning attack samples'''
         return best_x_pois, best_y_pois
 
