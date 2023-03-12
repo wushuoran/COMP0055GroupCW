@@ -27,10 +27,10 @@ class poisoner(object):
 
     def poison_data(self, x_pois, y_pois, stop_1, stop_2, stop3, decrease_rate):
 
-        '''
+        """
         Algorithm 1 in the paper
         Optimization-Based Poisoning Attack Algorithm (OptP)
-        '''
+        """
 
         poison_ct = x_pois.shape[0]
         best_x_pois = np.zeros(x_pois.shape)
@@ -67,7 +67,7 @@ class poisoner(object):
                 x_pois_ele = x_pois[i]
                 y_pois_ele = y_pois[i]
                 m = self.compute_matrix(classifier, x_pois_ele, y_pois_ele)
-
+                ''' prepare parameters needed by line search '''
                 weight_expt_last_row, bias_last_row, weight_expt_last_col, bias_last_col \
                     = self.compute_weight_bias(classifier.coef_, m, self.sample_amt, x_pois_ele)
                 option_arg = (self.compute_vector_r(classifier, lam),)
@@ -79,7 +79,7 @@ class poisoner(object):
                 norm = np.linalg.norm(all_attacks)
                 all_attacks = all_attacks / norm if norm > 0 else all_attacks
                 ''' line search (Line 7 in Algorithm 1)'''
-                x_pois_ele, y_pois_ele = self.search_line(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
+                x_pois_ele, y_pois_ele = self.line_search(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
                 x_pois_ele = x_pois_ele.reshape((1, self.col_amt))
                 new_x_pois[i] = x_pois_ele
                 new_y_pois[i] = y_pois_ele
@@ -118,7 +118,7 @@ class poisoner(object):
         ''' OUTPUT final poisoning attack samples'''
         return best_x_pois, best_y_pois
 
-    def search_line(self, x_pois_ele, y_pois_ele, attack, attack_y):
+    def line_search(self, x_pois_ele, y_pois_ele, attack, attack_y):
         k = 0
         x0 = np.copy(self.train_x)
         y0 = self.train_y[:]
@@ -223,6 +223,21 @@ class poisoner(object):
         error = tuple([valid_mse, test_mse])
         return obj_current, obj_last, error
 
+    def compute_weight_bias(self, w, m, n, x_pois_ele):
+        """ uses equation 7 in the paper """
+        multiplier = np.mean(self.train_x, axis=0)
+        ' first element of equation 4 right hand side '
+        equation_7_left = np.bmat([[self.compute_sigma(), np.transpose(multiplier)], [multiplier, np.matrix([1])]])
+        equation_7_right = -(1 / n) * np.bmat([[m, -np.matrix(x_pois_ele.T)], [np.matrix(w.T), np.matrix([-1])]])
+
+        weight_bias_matrix = np.linalg.lstsq(equation_7_left, equation_7_right, rcond=None)[0]
+        weight_expt_last_row = weight_bias_matrix[:-1, :-1]  # get all but last row
+        bias_last_row = weight_bias_matrix[-1, :-1]  # get last row
+        weight_expt_last_col = weight_bias_matrix[:-1, -1]
+        bias_last_col = weight_bias_matrix[-1, -1]
+
+        return weight_expt_last_row, bias_last_row.ravel(), weight_expt_last_col.ravel(), bias_last_col
+
 """
 Linear Regression Poisoner
 """
@@ -251,18 +266,6 @@ class linear_poisoner(poisoner):
         error = (np.dot(weight, x_pois_ele_transpose) + bias - y_pois_ele).reshape((1, 1))
         return np.dot(x_pois_ele_transpose, w_transpose) + np.identity(self.col_amt) * error[0, 0]
 
-    def compute_weight_bias(self, w, m, n, x_pois_ele):
-        multiplier = np.mean(self.train_x, axis=0)
-        equation_7_left = np.bmat([[self.compute_sigma(), np.transpose(multiplier)], [multiplier, np.matrix([1])]])
-        equation_7_right = -(1 / n) * np.bmat([[m, -np.matrix(x_pois_ele.T)], [np.matrix(w.T), np.matrix([-1])]])
-
-        weight_bias_matrix = np.linalg.lstsq(equation_7_left, equation_7_right, rcond=None)[0]
-        weight_expt_last_row = weight_bias_matrix[:-1, :-1]  # get all but last row
-        bias_last_row = weight_bias_matrix[-1, :-1]  # get last row
-        weight_expt_last_col = weight_bias_matrix[:-1, -1]
-        bias_last_col = weight_bias_matrix[-1, -1]
-
-        return weight_expt_last_row, bias_last_row.ravel(), weight_expt_last_col.ravel(), bias_last_col
 
     def compute_vector_r(self, classifier, lam):
         # a zero vector of length equal to the number of features in the training data
