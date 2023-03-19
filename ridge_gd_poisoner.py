@@ -103,13 +103,16 @@ class poisoner(object):
                 norm = np.linalg.norm(all_attacks)
                 if norm > 0:
                     all_attacks = all_attacks / norm
+                 # Append the new point  the training data for linesearch
+                current_x = np.append(self.train_x, x_pois_ele, axis=0)
+                current_y = np.append(self.train_y, y_pois_ele)
+                attack_val = all_attacks[:-1]
                 ''' line search (Line 7 in Algorithm 1)'''
-                x_pois_ele, y_pois_ele = self.line_search(x_pois_ele, y_pois_ele, all_attacks[:-1], all_attacks[-1])
+                x_pois_ele, y_pois_ele = self.line_search(current_x,current_y,x_pois_ele, y_pois_ele, attack_val)
                 x_pois_ele = x_pois_ele.reshape((1, self.col_amt))
                 # assign the poisoned row and label to the lists created at the beginning of while loop
                 new_x_pois[i] = x_pois_ele
                 new_y_pois[i] = y_pois_ele
-
             # train the new model on the new poisoned data
             loss_current, loss_previous, valid_mse, test_mse = self.iteration_train(x_pois, y_pois, new_x_pois, new_y_pois)
             print("Iteration ", count + 1)
@@ -143,65 +146,47 @@ class poisoner(object):
         ''' OUTPUT final poisoning attack samples'''
         return best_x_pois, best_y_pois
 
-    def line_search(self, x_pois_ele, y_pois_ele, attack_vals, attack_bias):
+    def line_search(self,current_x,current_y, current_x_pois_ele, current_y_pois_ele, attack_vals):
         """ optimise the content of current poisoned row and its label, to maximise the impact
             Reference: 'lineSearch' in author's code """
-        count = 0
         step = self.step
-        train_x_copy = self.train_x
-        train_y_copy = self.train_y
-        # Append the new point to the copy of the training data
-        current_x = np.append(train_x_copy, x_pois_ele, axis=0)
-        current_y = np.append(train_y_copy, y_pois_ele)
         # Train the model on the poisoned data, then make a copy of the classifier
         classifier_copy = self.init_classifier
-        # Initialize variables for tracking progress
-        last_x_pois_ele = x_pois_ele
-        last_y_pois_ele = y_pois_ele
-        current_x_pois_ele = x_pois_ele
-        current_y_pois_ele = y_pois_ele
-        # Compute the loss value before starting the line search
+        # record the last time loss
         loss_before = self.loss_function(classifier_copy)
+        # Initialize variables for tracking progress
+        count = 0
+        # compute the different between the last and current time loss, set it to be 1 at the begining so the iteration can go on
+        dif = 1
+        eps = self.eps
         # Perform line search until convergence or max iterations reached
-        while True:
-            if count > 0:
-                step = self.beta * step
+        while count < 99 and dif > eps:
+            step = self.beta * step if count > 0 else step
+            # record the last time elements
+            last_x_pois_ele = current_x_pois_ele
+            last_y_pois_ele = current_y_pois_ele
             # Update the adversarial point and clip it to valid input range
             current_x_pois_ele = current_x_pois_ele + step * attack_vals
-            current_x_pois_ele = np.minimum(current_x_pois_ele,1)
-            current_x_pois_ele = np.maximum(current_x_pois_ele,0)
+            current_x_pois_ele = np.minimum(current_x_pois_ele, 1)
+            current_x_pois_ele = np.maximum(current_x_pois_ele, 0)
             current_x[-1] = current_x_pois_ele
-            # Update the adversarial label and clip it to valid label range
-            current_y_pois_ele = current_y_pois_ele + attack_bias * step
-            current_y_pois_ele = np.minimum(current_y_pois_ele, 1)
-            current_y_pois_ele = np.maximum(current_y_pois_ele, 0)
-            current_y[-1] = current_y_pois_ele
-            # Train the model on the updated data and compute the objective function value
             classifier_copy.fit(current_x, current_y)
             loss_after = self.loss_function(classifier_copy)
+            dif = abs(loss_before - loss_after)
             # Check for convergence or bad progress
-            if count >= 99 or abs(loss_before - loss_after) < 1e-8:
-                break
             if loss_after - loss_before < 0:  # bad progress
                 current_x_pois_ele = last_x_pois_ele
                 current_y_pois_ele = last_y_pois_ele
                 break
             # Update progress variables
             loss_before = loss_after
-            last_x_pois_ele = current_x_pois_ele
-            last_y_pois_ele = current_y_pois_ele
             count += 1
         return current_x_pois_ele, current_y_pois_ele
 
     def loss_function(self, classifier):
         """ a regularized loss function computed on the training data (excluding the poisoning points) """
-        # Compute L2 norm of coefficients
-        l2 = np.linalg.norm(classifier.coef_) / 2
-        # compute objective function value
         errs = classifier.predict(self.train_x) - self.train_y
-        current_weight = (np.linalg.norm(errs) ** 2) / self.row_amt
-        # Add L2 regularization term to the objective function
-        return 0.1 * l2 + current_weight
+        return (np.linalg.norm(errs) ** 2) / self.row_amt
 
     def iteration_train(self, last_x_pois, last_y_pois, current_x_pois, current_y_pois):
         """ compare the effectiveness of the current poisoned data with the previous one """
